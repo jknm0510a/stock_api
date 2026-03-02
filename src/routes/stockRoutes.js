@@ -15,8 +15,17 @@ app.get('/:symbol/candles', async (c) => {
         // In Cloudflare Workers, environment variables are in `c.env`
         const apiKey = c.env.FUGLE_API_KEY;
 
-        const data = await fugleService.getIntradayCandles(symbol, apiKey, timeframe);
-        return c.json({ success: true, symbol, data: data.data || [] });
+        const [candlesRes, tickerRes] = await Promise.all([
+            fugleService.getIntradayCandles(symbol, apiKey, timeframe),
+            fugleService.getIntradayTicker(symbol, apiKey).catch(() => null)
+        ]);
+
+        return c.json({
+            success: true,
+            symbol,
+            previousClose: tickerRes?.previousClose || null,
+            data: candlesRes.data || []
+        });
     } catch (error) {
         console.error(`Error in /api/stock/${c.req.param('symbol')}/candles:`, error.message);
         return c.json({

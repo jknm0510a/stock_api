@@ -147,8 +147,13 @@ async function handleEvent(event, c) {
             }], channelAccessToken);
 
             // 2. Fetch data from Fugle (timeframe=3 as requested by user)
-            const response = await fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 3);
-            const candles = response.data || [];
+            const [candlesRes, tickerRes] = await Promise.all([
+                fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 3),
+                fugleService.getIntradayTicker(symbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
+            ]);
+
+            const candles = candlesRes.data || [];
+            const previousClose = tickerRes?.previousClose;
 
             if (candles.length === 0) {
                 // Send via push since replyToken is already used
@@ -159,24 +164,18 @@ async function handleEvent(event, c) {
             }
 
             // 3. Generate Chart URL (QuickChart)
-            const imageId = await chartService.generateTrendChartUrl(symbol, candles);
+            const imageId = await chartService.generateTrendChartUrl(symbol, candles, previousClose);
 
             // 4. Construct proxy URL ensuring it's HTTPS and native .png
             const urlObj = new URL(reqUrl);
             const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
 
-            // 5. Send Image & Text Link via Push Message for debugging
-            return await pushMessage(event.source.userId, [
-                {
-                    type: 'image',
-                    originalContentUrl: imageUrl,
-                    previewImageUrl: imageUrl
-                },
-                {
-                    type: 'text',
-                    text: `[測試除錯]\n圖片代理網址:\n${imageUrl}\n\nQuickChart 原始短網址:\nhttps://quickchart.io/chart/render/${imageId}`
-                }
-            ], channelAccessToken);
+            // 5. Send Image via Push Message
+            return await pushMessage(event.source.userId, [{
+                type: 'image',
+                originalContentUrl: imageUrl,
+                previewImageUrl: imageUrl
+            }], channelAccessToken);
 
         } catch (error) {
             console.error('Error handling search:', error);

@@ -35,6 +35,34 @@ class FugleService {
             throw error;
         }
     }
+
+    /**
+     * 取得股票基本資料（依代碼查詢，內含昨日收盤價 previousClose）
+     * @param {string} symbol - 股票代碼 (e.g. '2330')
+     * @param {string} apiKey - API 金鑰
+     * @returns {Promise<Object>}
+     */
+    async getIntradayTicker(symbol, apiKey) {
+        if (!apiKey) {
+            throw new Error('API Key missing');
+        }
+        try {
+            const url = `${this.baseUrl}/intraday/ticker/${symbol}`;
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-API-KEY': apiKey
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`Fugle API responded with status: ${response.status}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error(`Error fetching intraday ticker for ${symbol}:`, error.message);
+            throw error;
+        }
+    }
 }
 
 export default new FugleService();
