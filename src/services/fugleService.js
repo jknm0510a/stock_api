@@ -1,3 +1,9 @@
+// In-memory cache for Cloudflare Workers
+// Note: Isolate memory is cleared when the worker restarts or drops out of memory,
+// but for high-frequency hits like trending charts, a simple Map cache is extremely effective.
+const candlesCache = new Map();
+const tickerCache = new Map();
+
 class FugleService {
     constructor() {
         this.baseUrl = 'https://api.fugle.tw/marketdata/v1.0/stock';
@@ -16,6 +22,16 @@ class FugleService {
             throw new Error('API Key missing');
         }
 
+        const cacheKey = `${symbol}_${timeframe}`;
+        if (candlesCache.has(cacheKey)) {
+            const cached = candlesCache.get(cacheKey);
+            // 3 minutes (180,000 ms) expiration
+            if (Date.now() - cached.timestamp < 3 * 60 * 1000) {
+                console.log(`[Cache Hit] Candles for ${symbol}`);
+                return cached.data;
+            }
+        }
+
         try {
             const url = `${this.baseUrl}/intraday/candles/${symbol}?timeframe=${timeframe}`;
             const response = await fetch(url, {
@@ -29,7 +45,15 @@ class FugleService {
                 throw new Error(`Fugle API responded with status: ${response.status}`);
             }
 
-            return await response.json();
+            const data = await response.json();
+
+            // Save to cache
+            candlesCache.set(cacheKey, {
+                timestamp: Date.now(),
+                data: data
+            });
+
+            return data;
         } catch (error) {
             console.error(`Error fetching intraday candles for ${symbol}:`, error.message);
             throw error;
@@ -46,6 +70,16 @@ class FugleService {
         if (!apiKey) {
             throw new Error('API Key missing');
         }
+        const cacheKey = symbol;
+        if (tickerCache.has(cacheKey)) {
+            const cached = tickerCache.get(cacheKey);
+            // 12 hours (43,200,000 ms) expiration, enough for an intraday session since yesterday's close won't change
+            if (Date.now() - cached.timestamp < 12 * 60 * 60 * 1000) {
+                console.log(`[Cache Hit] Ticker for ${symbol}`);
+                return cached.data;
+            }
+        }
+
         try {
             const url = `${this.baseUrl}/intraday/ticker/${symbol}`;
             const response = await fetch(url, {
@@ -57,7 +91,16 @@ class FugleService {
             if (!response.ok) {
                 throw new Error(`Fugle API responded with status: ${response.status}`);
             }
-            return await response.json();
+
+            const data = await response.json();
+
+            // Save to cache
+            tickerCache.set(cacheKey, {
+                timestamp: Date.now(),
+                data: data
+            });
+
+            return data;
         } catch (error) {
             console.error(`Error fetching intraday ticker for ${symbol}:`, error.message);
             throw error;
