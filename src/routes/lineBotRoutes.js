@@ -32,7 +32,7 @@ async function verifySignature(channelSecret, body, signature) {
 
 // Minimal LINE Bot API client using standard fetch
 async function replyMessage(replyToken, messages, channelAccessToken) {
-    return fetch('https://api.line.me/v2/bot/message/reply', {
+    const res = await fetch('https://api.line.me/v2/bot/message/reply', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -43,10 +43,16 @@ async function replyMessage(replyToken, messages, channelAccessToken) {
             messages: messages
         })
     });
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error('LINE Reply API Error:', res.status, errorText);
+        throw new Error(`LINE Reply Failed: ${res.status}`);
+    }
+    return res;
 }
 
 async function pushMessage(to, messages, channelAccessToken) {
-    return fetch('https://api.line.me/v2/bot/message/push', {
+    const res = await fetch('https://api.line.me/v2/bot/message/push', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -57,6 +63,12 @@ async function pushMessage(to, messages, channelAccessToken) {
             messages: messages
         })
     });
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error('LINE Push API Error:', res.status, errorText);
+        throw new Error(`LINE Push Failed: ${res.status}`);
+    }
+    return res;
 }
 
 app.post('/', async (c) => {
@@ -90,12 +102,32 @@ app.post('/', async (c) => {
 
     // Process events in parallel but don't block the response.
     // In Cloudflare Workers, we use c.executionCtx.waitUntil to keep processing after response.
-    c.executionCtx.waitUntil(Promise.all(events.map(event => handleEvent(event, c.env))));
+    c.executionCtx.waitUntil(Promise.all(events.map(event => handleEvent(event, c))));
 
     return c.json({ success: true });
 });
 
-async function handleEvent(event, env) {
+// Proxy route for serving images directly with a clean .png extension
+app.get('/image/:id', async (c) => {
+    const idWithExt = c.req.param('id');
+    const id = idWithExt.replace('.png', '');
+    const quickChartUrl = `https://quickchart.io/chart/render/${id}`;
+
+    const response = await fetch(quickChartUrl);
+    if (!response.ok) {
+        return c.text('Image not found', 404);
+    }
+
+    const headers = new Headers();
+    headers.set('Content-Type', 'image/png');
+    headers.set('Cache-Control', 'public, max-age=31536000');
+
+    return new Response(response.body, { status: 200, headers });
+});
+
+async function handleEvent(event, c) {
+    const env = c.env;
+    const reqUrl = c.req.url;
     if (event.type !== 'message' || event.message.type !== 'text') {
         return;
     }
@@ -114,8 +146,8 @@ async function handleEvent(event, env) {
                 text: `查詢 ${symbol} 盤中資訊中，請稍候...`
             }], channelAccessToken);
 
-            // 2. Fetch data from Fugle
-            const response = await fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 1);
+            // 2. Fetch data from Fugle (timeframe=3 as requested by user)
+            const response = await fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 3);
             const candles = response.data || [];
 
             if (candles.length === 0) {
@@ -127,14 +159,24 @@ async function handleEvent(event, env) {
             }
 
             // 3. Generate Chart URL (QuickChart)
-            const imageUrl = chartService.generateTrendChartUrl(symbol, candles);
+            const imageId = await chartService.generateTrendChartUrl(symbol, candles);
 
-            // 4. Send Image via Push Message
-            return await pushMessage(event.source.userId, [{
-                type: 'image',
-                originalContentUrl: imageUrl,
-                previewImageUrl: imageUrl // QuickChart generates fast enough that preview == original
-            }], channelAccessToken);
+            // 4. Construct proxy URL ensuring it's HTTPS and native .png
+            const urlObj = new URL(reqUrl);
+            const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
+
+            // 5. Send Image & Text Link via Push Message for debugging
+            return await pushMessage(event.source.userId, [
+                {
+                    type: 'image',
+                    originalContentUrl: imageUrl,
+                    previewImageUrl: imageUrl
+                },
+                {
+                    type: 'text',
+                    text: `[測試除錯]\n圖片代理網址:\n${imageUrl}\n\nQuickChart 原始短網址:\nhttps://quickchart.io/chart/render/${imageId}`
+                }
+            ], channelAccessToken);
 
         } catch (error) {
             console.error('Error handling search:', error);

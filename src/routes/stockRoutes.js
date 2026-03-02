@@ -10,7 +10,7 @@ const app = new Hono();
 app.get('/:symbol/candles', async (c) => {
     try {
         const symbol = c.req.param('symbol');
-        const timeframe = c.req.query('timeframe') || 1;
+        const timeframe = c.req.query('timeframe') || 3;
 
         // In Cloudflare Workers, environment variables are in `c.env`
         const apiKey = c.env.FUGLE_API_KEY;

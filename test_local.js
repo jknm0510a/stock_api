@@ -17,11 +17,11 @@ async function testLocal() {
     try {
         const url = `https://api.fugle.tw/marketdata/v1.0/stock/intraday/candles/${SYMBOL}`;
         console.log(`\n測試 API URL: ${url}`);
-        console.log('使用 timeframe: 1');
+        console.log('使用 timeframe: 3');
 
         const response = await axios.get(url, {
             headers: { 'X-API-KEY': API_KEY },
-            params: { timeframe: 1 }
+            params: { timeframe: 3 }
         });
 
         const candles = response.data.data;

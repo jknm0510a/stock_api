@@ -21,15 +21,22 @@ class ChartService {
      * Generates a QuickChart URL for the trend chart
      * @param {string} symbol - Stock symbol
      * @param {Array} candles - Array of candle data objects from Fugle API
-     * @returns {string} - QuickChart Image URL
+     * @returns {Promise<string>} - QuickChart Image Short URL
      */
-    generateTrendChartUrl(symbol, candles) {
+    async generateTrendChartUrl(symbol, candles) {
         if (!candles || candles.length === 0) {
             throw new Error('No candle data available to generate chart');
         }
 
         // Sort ascending by time
-        const sortedCandles = [...candles].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        let sortedCandles = [...candles].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // QuickChart free tier has a limit of around 200-266 data points per chart
+        // If we have more than 200 points, we downsample by taking every Nth candle
+        if (sortedCandles.length > 200) {
+            const step = Math.ceil(sortedCandles.length / 200);
+            sortedCandles = sortedCandles.filter((_, index) => index % step === 0 || index === sortedCandles.length - 1);
+        }
 
         const labels = sortedCandles.map(c => formatTimeUTC8(c.date));
         const data = sortedCandles.map(c => c.close);
@@ -74,9 +81,37 @@ class ChartService {
             }
         };
 
-        // Serialize and URL encode for QuickChart
-        const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
-        return `https://quickchart.io/chart?w=800&h=400&c=${encodedConfig}`;
+        try {
+            const response = await fetch('https://quickchart.io/chart/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chart: chartConfig,
+                    width: 800,
+                    height: 400,
+                    format: 'png'
+                })
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`QuickChart API Error: ${response.status} ${text}`);
+            }
+
+            const responseJson = await response.json();
+            if (!responseJson.success) {
+                throw new Error('QuickChart failed to generate short URL');
+            }
+
+            // QuickChart's url looks like: https://quickchart.io/chart/render/zf-xxx 
+            // We return just the ID so our own proxy can serve it with a clean .png extension
+            return responseJson.url.split('/').pop();
+        } catch (error) {
+            console.error('Error generating short URL with QuickChart:', error);
+            throw error;
+        }
     }
 }
 
