@@ -1,0 +1,9 @@
+name = "stock-api"
+main = "src/index.js"
+compatibility_date = "2024-03-01"
+
+# To define environment variables you will use later
+# FUGLE_API_KEY, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+# Do NOT put actual secrets here if they are going to be in an open source repo.
+# Run `npx wrangler secret put FUGLE_API_KEY` to set them in production.
+# For local dev, we will use a `.dev.vars` file.

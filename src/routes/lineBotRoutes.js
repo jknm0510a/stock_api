@@ -1,115 +1,151 @@
-const express = require('express');
-const { middleware, Client } = require('@line/bot-sdk');
-const fugleService = require('../services/fugleService');
-const chartService = require('../services/chartService');
-const router = express.Router();
+import { Hono } from 'hono';
+import fugleService from '../services/fugleService';
+import chartService from '../services/chartService';
 
-const config = {
-    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',
-    channelSecret: process.env.LINE_CHANNEL_SECRET || ''
-};
+const app = new Hono();
 
-// Initialize LINE Client if config provided
-let client;
-if (config.channelAccessToken && config.channelSecret) {
-    client = new Client(config);
+// Helper to verify LINE Webhook Signature using Web Crypto API (available in Cloudflare Workers)
+async function verifySignature(channelSecret, body, signature) {
+    const enc = new TextEncoder();
+
+    // Import the secret key
+    const key = await crypto.subtle.importKey(
+        'raw',
+        enc.encode(channelSecret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+
+    // Sign the body
+    const signatureBuffer = await crypto.subtle.sign(
+        'HMAC',
+        key,
+        enc.encode(body)
+    );
+
+    // Convert to base64
+    const base64Signature = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+
+    return base64Signature === signature;
 }
 
-// Store generated charts temporarily in memory (just for MVP/demo purposes)
-// In a real production app, upload images to S3/Cloudinary and serve URLs
-const imageCache = new Map();
+// Minimal LINE Bot API client using standard fetch
+async function replyMessage(replyToken, messages, channelAccessToken) {
+    return fetch('https://api.line.me/v2/bot/message/reply', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${channelAccessToken}`
+        },
+        body: JSON.stringify({
+            replyToken: replyToken,
+            messages: messages
+        })
+    });
+}
 
-router.use('/', middleware(config), async (req, res) => {
-    try {
-        const events = req.body.events;
-        await Promise.all(events.map(handleEvent));
-        res.status(200).json({ success: true });
-    } catch (error) {
-        console.error('Webhook error:', error);
-        res.status(500).end();
+async function pushMessage(to, messages, channelAccessToken) {
+    return fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${channelAccessToken}`
+        },
+        body: JSON.stringify({
+            to: to,
+            messages: messages
+        })
+    });
+}
+
+app.post('/', async (c) => {
+    const signature = c.req.header('x-line-signature');
+    const bodyText = await c.req.text(); // Get raw body text for signature verification
+
+    const channelSecret = c.env.LINE_CHANNEL_SECRET;
+    const channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+
+    if (!signature || !channelSecret || !channelAccessToken) {
+        return c.json({ error: 'Missing configurations or signature' }, 401);
     }
+
+    // Verify signature
+    const isValid = await verifySignature(channelSecret, bodyText, signature);
+    if (!isValid) {
+        return c.json({ error: 'Invalid signature' }, 401);
+    }
+
+    let body;
+    try {
+        body = JSON.parse(bodyText);
+    } catch (e) {
+        return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const events = body.events;
+    if (!events || !Array.isArray(events)) {
+        return c.json({ success: true });
+    }
+
+    // Process events in parallel but don't block the response.
+    // In Cloudflare Workers, we use c.executionCtx.waitUntil to keep processing after response.
+    c.executionCtx.waitUntil(Promise.all(events.map(event => handleEvent(event, c.env))));
+
+    return c.json({ success: true });
 });
 
-async function handleEvent(event) {
+async function handleEvent(event, env) {
     if (event.type !== 'message' || event.message.type !== 'text') {
-        return Promise.resolve(null);
+        return;
     }
 
     const text = event.message.text.trim();
+    const channelAccessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
 
     // Handle /search {symbol}
     if (text.startsWith('/search ')) {
         const symbol = text.replace('/search ', '').trim();
 
         try {
-            if (!client) {
-                throw new Error('LINE client not properly configured');
-            }
-
-            // Tell user we are querying
-            await client.replyMessage(event.replyToken, {
+            // 1. Acknowledge user first using the reply token
+            await replyMessage(event.replyToken, [{
                 type: 'text',
                 text: `查詢 ${symbol} 盤中資訊中，請稍候...`
-            });
+            }], channelAccessToken);
 
-            const response = await fugleService.getIntradayCandles(symbol, 1);
+            // 2. Fetch data from Fugle
+            const response = await fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 1);
             const candles = response.data || [];
 
             if (candles.length === 0) {
-                // Send push message since we already used the reply token
-                return client.pushMessage(event.source.userId, {
+                // Send via push since replyToken is already used
+                return await pushMessage(event.source.userId, [{
                     type: 'text',
                     text: `查無 ${symbol} 的當日交易紀錄`
-                });
+                }], channelAccessToken);
             }
 
-            // Generate Chart Image
-            const imageBuffer = await chartService.generateTrendChart(symbol, candles);
+            // 3. Generate Chart URL (QuickChart)
+            const imageUrl = chartService.generateTrendChartUrl(symbol, candles);
 
-            // We will create a route to host this image and serve it to LINE since LINE Requires HTTPS URL
-            // For this implementation, we just mock the URL system using the current host if we had dynamic ngrok mapping
-            // Or in a fully complete bot, we'd use Imgur API to upload the image buffer. 
-            // To satisfy the requirement, we'll store it in a cache and create a quick access route.
-
-            const imageId = `${symbol}_${Date.now()}`;
-            imageCache.set(imageId, imageBuffer);
-
-            // Notice: LINE bot requires HTTPS image URL. Users must run the API server using ngrok to test it.
-            // E.g. https://your-ngrok-url.ngrok.io/webhook/image/:id
-            // We'll put a placeholder generic base URL but it should come from an env var
-            const baseUrl = process.env.BASE_URL || 'https://example.com';
-            const imageUrl = `${baseUrl}/webhook/image/${imageId}`;
-
-            return client.pushMessage(event.source.userId, {
+            // 4. Send Image via Push Message
+            return await pushMessage(event.source.userId, [{
                 type: 'image',
                 originalContentUrl: imageUrl,
-                previewImageUrl: imageUrl
-            });
+                previewImageUrl: imageUrl // QuickChart generates fast enough that preview == original
+            }], channelAccessToken);
 
         } catch (error) {
             console.error('Error handling search:', error);
-            if (client && event.source.userId) {
-                return client.pushMessage(event.source.userId, {
+            if (event.source.userId) {
+                return await pushMessage(event.source.userId, [{
                     type: 'text',
                     text: `查詢股票 ${symbol} 失敗: ${error.message}`
-                });
+                }], channelAccessToken);
             }
         }
     }
-
-    return Promise.resolve(null);
 }
 
-// Optional endpoint to serve the cached images for the LINE bot
-const imageRouter = express.Router();
-imageRouter.get('/image/:id', (req, res) => {
-    const buffer = imageCache.get(req.params.id);
-    if (!buffer) {
-        return res.status(404).send('Image not found or expired');
-    }
-    res.setHeader('Content-Type', 'image/png');
-    res.send(buffer);
-});
-
-module.exports = router;
-module.exports.imageRouter = imageRouter;
+export default app;

@@ -1,21 +1,29 @@
-const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
-const moment = require('moment-timezone');
+/**
+ * ChartService specifically modified for Cloudflare Workers
+ * Because native chart generation (canvas) is unavailable, we use QuickChart API
+ * to generate a chart URL that we can serve instantly.
+ */
+
+// If you have `moment` installed, it might be large. For Edge, manual UTC+8 parsing is preferred or a lightweight alternatave.
+// We'll write a lightweight formatter to avoid dependencies.
+function formatTimeUTC8(isoString) {
+    const d = new Date(isoString);
+    // Add 8 hours for UTC+8 (Fugle data is already in correct TZ if not Z, but let's be safe)
+    // Assuming Fugle date looks like "2023-10-25T09:00:00+08:00"
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+}
 
 class ChartService {
-    constructor() {
-        this.width = 800;
-        this.height = 400;
-        // Using a simple configuration without custom fonts or callbacks to avoid canvas errors
-        this.chartJSNodeCanvas = new ChartJSNodeCanvas({ width: this.width, height: this.height, backgroundColour: 'white' });
-    }
 
     /**
-     * Generates a trend chart image buffer from 1-min candle data
+     * Generates a QuickChart URL for the trend chart
      * @param {string} symbol - Stock symbol
      * @param {Array} candles - Array of candle data objects from Fugle API
-     * @returns {Promise<Buffer>} - Image buffer in PNG format
+     * @returns {string} - QuickChart Image URL
      */
-    async generateTrendChart(symbol, candles) {
+    generateTrendChartUrl(symbol, candles) {
         if (!candles || candles.length === 0) {
             throw new Error('No candle data available to generate chart');
         }
@@ -23,15 +31,15 @@ class ChartService {
         // Sort ascending by time
         const sortedCandles = [...candles].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        const labels = sortedCandles.map(c => moment.tz(c.date, 'Asia/Taipei').format('HH:mm'));
-        const data = sortedCandles.map(c => c.close); // Use closing price for trend
+        const labels = sortedCandles.map(c => formatTimeUTC8(c.date));
+        const data = sortedCandles.map(c => c.close);
 
-        // Get min and max for better Y-axis scaling
         const minPrice = Math.min(...data);
         const maxPrice = Math.max(...data);
         const padding = (maxPrice - minPrice) * 0.1 || 1;
 
-        const configuration = {
+        // QuickChart Configuration Object (Standard Chart.js v2/v3 syntax supported by QuickChart)
+        const chartConfig = {
             type: 'line',
             data: {
                 labels: labels,
@@ -41,44 +49,35 @@ class ChartService {
                     borderColor: 'rgb(255, 99, 132)',
                     backgroundColor: 'rgba(255, 99, 132, 0.2)',
                     borderWidth: 2,
-                    pointRadius: 0, // hide dots for cleaner trend line
+                    pointRadius: 0,
                     fill: true,
                     tension: 0.1
                 }]
             },
             options: {
                 scales: {
-                    x: {
+                    xAxes: [{
                         display: true,
-                        title: {
-                            display: true,
-                            text: 'Time (UTC+8)'
-                        },
+                        scaleLabel: { display: true, labelString: 'Time (UTC+8)' },
+                        ticks: { maxTicksLimit: 10 }
+                    }],
+                    yAxes: [{
+                        display: true,
+                        scaleLabel: { display: true, labelString: 'Price' },
                         ticks: {
-                            maxTicksLimit: 10 // avoid overlapping
+                            min: Math.max(0, minPrice - padding),
+                            max: maxPrice + padding
                         }
-                    },
-                    y: {
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Price'
-                        },
-                        min: Math.max(0, minPrice - padding),
-                        max: maxPrice + padding
-                    }
+                    }]
                 },
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top',
-                    },
-                }
+                legend: { display: true, position: 'top' }
             }
         };
 
-        return await this.chartJSNodeCanvas.renderToBuffer(configuration);
+        // Serialize and URL encode for QuickChart
+        const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
+        return `https://quickchart.io/chart?w=800&h=400&c=${encodedConfig}`;
     }
 }
 
-module.exports = new ChartService();
+export default new ChartService();

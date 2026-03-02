@@ -1,32 +1,35 @@
-const axios = require('axios');
-
 class FugleService {
     constructor() {
-        this.apiKey = process.env.FUGLE_API_KEY;
         this.baseUrl = 'https://api.fugle.tw/marketdata/v1.0/stock';
-
-        if (!this.apiKey) {
-            console.warn('FUGLE_API_KEY is not defined in environment variables');
-        }
     }
 
     /**
      * 取得股票價格 K 線（依代碼查詢）
      * @param {string} symbol - 股票代碼 (e.g. '2330')
+     * @param {string} apiKey - 來自 Cloudflare Environment 的 API 金鑰
      * @param {number} timeframe - 取樣頻率，1、5、10、15、30、60 (預設 1 分 K)
      * @returns {Promise<Object>}
      */
-    async getIntradayCandles(symbol, timeframe = 1) {
+    async getIntradayCandles(symbol, apiKey, timeframe = 1) {
+        if (!apiKey) {
+            console.warn('FUGLE_API_KEY is not provided');
+            throw new Error('API Key missing');
+        }
+
         try {
-            const response = await axios.get(`${this.baseUrl}/intraday/candles/${symbol}`, {
+            const url = `${this.baseUrl}/intraday/candles/${symbol}?timeframe=${timeframe}`;
+            const response = await fetch(url, {
+                method: 'GET',
                 headers: {
-                    'X-API-KEY': this.apiKey
-                },
-                params: {
-                    timeframe
+                    'X-API-KEY': apiKey
                 }
             });
-            return response.data;
+
+            if (!response.ok) {
+                throw new Error(`Fugle API responded with status: ${response.status}`);
+            }
+
+            return await response.json();
         } catch (error) {
             console.error(`Error fetching intraday candles for ${symbol}:`, error.message);
             throw error;
@@ -34,4 +37,4 @@ class FugleService {
     }
 }
 
-module.exports = new FugleService();
+export default new FugleService();

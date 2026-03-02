@@ -1,26 +1,30 @@
-const express = require('express');
-const router = express.Router();
-const fugleService = require('../services/fugleService');
+import { Hono } from 'hono';
+import fugleService from '../services/fugleService';
+
+const app = new Hono();
 
 /**
  * @route GET /api/stock/:symbol/candles
  * @desc Get intraday 1-min candles for a specific stock
  */
-router.get('/:symbol/candles', async (req, res) => {
+app.get('/:symbol/candles', async (c) => {
     try {
-        const { symbol } = req.params;
-        const { timeframe } = req.query; // optional timeframe
+        const symbol = c.req.param('symbol');
+        const timeframe = c.req.query('timeframe') || 1;
 
-        const data = await fugleService.getIntradayCandles(symbol, timeframe || 1);
-        res.json({ success: true, symbol, data: data.data || [] });
+        // In Cloudflare Workers, environment variables are in `c.env`
+        const apiKey = c.env.FUGLE_API_KEY;
+
+        const data = await fugleService.getIntradayCandles(symbol, apiKey, timeframe);
+        return c.json({ success: true, symbol, data: data.data || [] });
     } catch (error) {
-        console.error(`Error in /api/stock/${req.params.symbol}/candles:`, error.message);
-        res.status(500).json({
+        console.error(`Error in /api/stock/${c.req.param('symbol')}/candles:`, error.message);
+        return c.json({
             success: false,
             message: 'Failed to fetch stock data',
-            error: error.response?.data || error.message
-        });
+            error: error.message
+        }, 500);
     }
 });
 
-module.exports = router;
+export default app;
