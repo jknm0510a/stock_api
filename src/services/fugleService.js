@@ -4,6 +4,29 @@
 const candlesCache = new Map();
 const tickerCache = new Map();
 
+/**
+ * 取得當前台北時間的交易日 Session ID
+ * 若時間早於早上 9:00，則歸屬於前一天的 Session。
+ * @param {number} ms - Timestamp in milliseconds
+ * @returns {string} Session ID (e.g. "2023-10-25")
+ */
+function getTradingSessionId(ms) {
+    // 加上 8 小時轉換為 UTC+8
+    const d = new Date(ms + 8 * 60 * 60 * 1000);
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const date = d.getUTCDate();
+    const h = d.getUTCHours();
+
+    // 早上 9 點前，屬於昨日的收盤狀態
+    if (h < 9) {
+        const prev = new Date(Date.UTC(y, m, date - 1));
+        return `${prev.getUTCFullYear()}-${prev.getUTCMonth()}-${prev.getUTCDate()}`;
+    }
+    // 早上 9 點後，進入今日的交易 Session
+    return `${y}-${m}-${date}`;
+}
+
 class FugleService {
     constructor() {
         this.baseUrl = 'https://api.fugle.tw/marketdata/v1.0/stock';
@@ -71,11 +94,13 @@ class FugleService {
             throw new Error('API Key missing');
         }
         const cacheKey = symbol;
+        const currentSession = getTradingSessionId(Date.now());
+
         if (tickerCache.has(cacheKey)) {
             const cached = tickerCache.get(cacheKey);
-            // 12 hours (43,200,000 ms) expiration, enough for an intraday session since yesterday's close won't change
-            if (Date.now() - cached.timestamp < 12 * 60 * 60 * 1000) {
-                console.log(`[Cache Hit] Ticker for ${symbol}`);
+            // 只要同一個交易日 Session，昨收價就不會變，直接使用快取
+            if (cached.session === currentSession) {
+                console.log(`[Cache Hit] Ticker for ${symbol} (Session: ${currentSession})`);
                 return cached.data;
             }
         }
@@ -96,7 +121,7 @@ class FugleService {
 
             // Save to cache
             tickerCache.set(cacheKey, {
-                timestamp: Date.now(),
+                session: currentSession,
                 data: data
             });
 
