@@ -135,38 +135,61 @@ async function handleEvent(event, c) {
     const text = event.message.text.trim();
     const channelAccessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
 
-    // Handle /search {symbol}
+    // Handle /search {symbol_or_name}
     if (text.startsWith('/search ')) {
-        const symbol = text.replace('/search ', '').trim();
+        const queryTerm = text.replace('/search ', '').trim();
 
         try {
+            // 0. Query D1 database to resolve symbol and name
+            const extDB = env.DB;
+            let realSymbol = queryTerm;
+            let realName = queryTerm;
+
+            // Try explicit symbol or fuzzy name search
+            const stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE symbol = ? OR name LIKE ? LIMIT 1');
+            const match = await stmt.bind(queryTerm, `%${queryTerm}%`).first();
+
+            if (match) {
+                realSymbol = match.symbol;
+                realName = match.name;
+            } else {
+                // Not found in database
+                return await replyMessage(event.replyToken, [{
+                    type: 'text',
+                    text: `找不到與「${queryTerm}」相關的股票，請確認名稱或代碼是否正確。`
+                }], channelAccessToken);
+            }
+
             // 1. Acknowledge user first using the reply token
+            const displayName = `${realSymbol} ${realName}`;
             await replyMessage(event.replyToken, [{
                 type: 'text',
-                text: `查詢 ${symbol} 盤中資訊中，請稍候...`
+                text: `查詢 ${displayName} 盤中資訊中，請稍候...`
             }], channelAccessToken);
 
             // 2. Fetch data from Fugle (timeframe=3 as requested by user)
             const [candlesRes, tickerRes] = await Promise.all([
-                fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 3),
-                fugleService.getIntradayTicker(symbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
+                fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 3),
+                fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
             ]);
 
-            const candles = candlesRes.data || [];
+            const candles = candlesRes?.data || [];
             const previousClose = tickerRes?.previousClose;
 
             if (candles.length === 0) {
                 // Send via push since replyToken is already used
                 return await pushMessage(event.source.userId, [{
                     type: 'text',
-                    text: `查無 ${symbol} 的當日交易紀錄`
+                    text: `查無 ${displayName} 的當日交易紀錄`
                 }], channelAccessToken);
             }
 
             // 3. Generate Chart URL (QuickChart)
-            const imageId = await chartService.generateTrendChartUrl(symbol, candles, previousClose);
+            // Use resolved name in the chart so it shows clearly!
+            const imageId = await chartService.generateTrendChartUrl(displayName, candles, previousClose);
 
             // 4. Construct proxy URL ensuring it's HTTPS and native .png
+            // Note: Since this proxy code executes asynchronously, we need the origin of the initial request.
             const urlObj = new URL(reqUrl);
             const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
 
@@ -182,7 +205,7 @@ async function handleEvent(event, c) {
             if (event.source.userId) {
                 return await pushMessage(event.source.userId, [{
                     type: 'text',
-                    text: `查詢股票 ${symbol} 失敗: ${error.message}`
+                    text: `查詢股票 ${queryTerm} 失敗: ${error.message}`
                 }], channelAccessToken);
             }
         }

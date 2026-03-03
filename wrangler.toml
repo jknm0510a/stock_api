@@ -7,3 +7,11 @@ compatibility_date = "2024-03-01"
 # Do NOT put actual secrets here if they are going to be in an open source repo.
 # Run `npx wrangler secret put FUGLE_API_KEY` to set them in production.
 # For local dev, we will use a `.dev.vars` file.
+
+[triggers]
+crons = ["0 1 * * *"] # 01:00 UTC is 09:00 UTC+8 (Taipei Time) daily
+
+[[d1_databases]]
+binding = "DB" # We will access the database via c.env.DB
+database_name = "stock-tickers-db"
+database_id = "481f9705-5680-4527-9f19-8eba1f652d08"

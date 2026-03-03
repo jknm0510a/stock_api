@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS tickers (
+    symbol TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

@@ -131,6 +131,52 @@ class FugleService {
             throw error;
         }
     }
+
+    /**
+     * 取得全股號/指數列表
+     * @param {string} apiKey - 來自 Cloudflare Environment 的 API 金鑰
+     * @returns {Promise<Array>} 包含 symbol, name, type 等資訊的陣列
+     */
+    async getGlobalTickers(apiKey) {
+        if (!apiKey) {
+            throw new Error('API Key missing');
+        }
+
+        const endpoints = [
+            { url: `${this.baseUrl}/intraday/tickers?type=EQUITY&exchange=TWSE&market=TSE`, type: 'EQUITY' },
+            { url: `${this.baseUrl}/intraday/tickers?type=INDEX&exchange=TWSE&market=TSE`, type: 'INDEX' }
+        ];
+
+        let allTickers = [];
+
+        try {
+            for (const ep of endpoints) {
+                const response = await fetch(ep.url, {
+                    method: 'GET',
+                    headers: { 'X-API-KEY': apiKey }
+                });
+
+                if (!response.ok) {
+                    console.error(`Fugle API responded with status: ${response.status} for ${ep.url}`);
+                    continue; // Skip failing ones but try the others
+                }
+
+                const data = await response.json();
+                if (data && data.data) {
+                    // Inject the type directly into the item since D1 needs it
+                    const itemsWithType = data.data.map(item => ({
+                        ...item,
+                        type: ep.type
+                    }));
+                    allTickers = allTickers.concat(itemsWithType);
+                }
+            }
+            return allTickers;
+        } catch (error) {
+            console.error(`Error fetching global tickers:`, error);
+            return []; // Return empty array so the cron job doesn't completely crash
+        }
+    }
 }
 
 export default new FugleService();
