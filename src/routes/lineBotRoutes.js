@@ -135,79 +135,99 @@ async function handleEvent(event, c) {
     const text = event.message.text.trim();
     const channelAccessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
 
-    // Handle /search {symbol_or_name}
-    if (text.startsWith('/search ')) {
-        const queryTerm = text.replace('/search ', '').trim();
+    const isPrivateChat = event.source.type === 'user';
+    const isSearchCommand = text.startsWith('/search ');
 
-        try {
-            // 0. Query D1 database to resolve symbol and name
-            const extDB = env.DB;
-            let realSymbol = queryTerm;
-            let realName = queryTerm;
+    // Logic: In 1-on-1 chat, everything is a search query. In groups, require '/search '
+    if (!isPrivateChat && !isSearchCommand) {
+        return; // Ignore regular messages in groups/rooms
+    }
 
-            // Try explicit symbol or fuzzy name search
-            const stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE symbol = ? OR name LIKE ? LIMIT 1');
-            const match = await stmt.bind(queryTerm, `%${queryTerm}%`).first();
+    let queryTerm = text;
+    if (isSearchCommand) {
+        queryTerm = text.replace('/search ', '').trim();
+    } else {
+        queryTerm = text.trim();
+    }
 
-            if (match) {
-                realSymbol = match.symbol;
-                realName = match.name;
-            } else {
-                // Not found in database
-                return await replyMessage(event.replyToken, [{
-                    type: 'text',
-                    text: `找不到與「${queryTerm}」相關的股票，請確認名稱或代碼是否正確。`
-                }], channelAccessToken);
-            }
+    if (!queryTerm) {
+        return; // Empty queries
+    }
 
-            // 1. Acknowledge user first using the reply token
-            const displayName = `${realSymbol} ${realName}`;
-            await replyMessage(event.replyToken, [{
+    try {
+        // 0. Query D1 database to resolve symbol and name
+        const extDB = env.DB;
+        let realSymbol = queryTerm;
+        let realName = queryTerm;
+
+        // Try explicit symbol or EXACT name search first
+        let stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE symbol = ? OR name = ? LIMIT 1');
+        let match = await stmt.bind(queryTerm, queryTerm).first();
+
+        // Fallback to fuzzy name search if no exact match is found
+        if (!match) {
+            stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE name LIKE ? LIMIT 1');
+            match = await stmt.bind(`%${queryTerm}%`).first();
+        }
+
+        if (match) {
+            realSymbol = match.symbol;
+            realName = match.name;
+        } else {
+            // Not found in database
+            return await replyMessage(event.replyToken, [{
                 type: 'text',
-                text: `查詢 ${displayName} 盤中資訊中，請稍候...`
+                text: `找不到與「${queryTerm}」相關的股票，請確認名稱或代碼是否正確。`
             }], channelAccessToken);
+        }
 
-            // 2. Fetch data from Fugle (timeframe=3 as requested by user)
-            const [candlesRes, tickerRes] = await Promise.all([
-                fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 3),
-                fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
-            ]);
+        // 1. Acknowledge user first using the reply token
+        const displayName = `${realSymbol} ${realName}`;
+        await replyMessage(event.replyToken, [{
+            type: 'text',
+            text: `查詢 ${displayName} 盤中資訊中，請稍候...`
+        }], channelAccessToken);
 
-            const candles = candlesRes?.data || [];
-            const previousClose = tickerRes?.previousClose;
+        // 2. Fetch data from Fugle (timeframe=3 as requested by user)
+        const [candlesRes, tickerRes] = await Promise.all([
+            fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 3),
+            fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
+        ]);
 
-            if (candles.length === 0) {
-                // Send via push since replyToken is already used
-                return await pushMessage(event.source.userId, [{
-                    type: 'text',
-                    text: `查無 ${displayName} 的當日交易紀錄`
-                }], channelAccessToken);
-            }
+        const candles = candlesRes?.data || [];
+        const previousClose = tickerRes?.previousClose;
 
-            // 3. Generate Chart URL (QuickChart)
-            // Use resolved name in the chart so it shows clearly!
-            const imageId = await chartService.generateTrendChartUrl(displayName, candles, previousClose);
-
-            // 4. Construct proxy URL ensuring it's HTTPS and native .png
-            // Note: Since this proxy code executes asynchronously, we need the origin of the initial request.
-            const urlObj = new URL(reqUrl);
-            const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
-
-            // 5. Send Image via Push Message
+        if (candles.length === 0) {
+            // Send via push since replyToken is already used
             return await pushMessage(event.source.userId, [{
-                type: 'image',
-                originalContentUrl: imageUrl,
-                previewImageUrl: imageUrl
+                type: 'text',
+                text: `查無 ${displayName} 的當日交易紀錄`
             }], channelAccessToken);
+        }
 
-        } catch (error) {
-            console.error('Error handling search:', error);
-            if (event.source.userId) {
-                return await pushMessage(event.source.userId, [{
-                    type: 'text',
-                    text: `查詢股票 ${queryTerm} 失敗: ${error.message}`
-                }], channelAccessToken);
-            }
+        // 3. Generate Chart URL (QuickChart)
+        // Use resolved name in the chart so it shows clearly!
+        const imageId = await chartService.generateTrendChartUrl(displayName, candles, previousClose);
+
+        // 4. Construct proxy URL ensuring it's HTTPS and native .png
+        // Note: Since this proxy code executes asynchronously, we need the origin of the initial request.
+        const urlObj = new URL(reqUrl);
+        const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
+
+        // 5. Send Image via Push Message
+        return await pushMessage(event.source.userId, [{
+            type: 'image',
+            originalContentUrl: imageUrl,
+            previewImageUrl: imageUrl
+        }], channelAccessToken);
+
+    } catch (error) {
+        console.error('Error handling search:', error);
+        if (event.source.userId) { // Still try to push error if possible
+            return await pushMessage(event.source.userId, [{
+                type: 'text',
+                text: `查詢股票 ${queryTerm} 失敗: ${error.message}`
+            }], channelAccessToken);
         }
     }
 }
