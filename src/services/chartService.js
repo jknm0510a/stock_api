@@ -96,6 +96,58 @@ class ChartService {
             yAxisMax = maxPrice + padding;
         }
 
+        const currentPrice = validDataValues.length > 0 ? validDataValues[validDataValues.length - 1] : null;
+
+        // Annotations Array
+        const annotationsArray = [];
+
+        if (previousClose) {
+            annotationsArray.push({
+                type: 'line',
+                mode: 'horizontal',
+                scaleID: 'y-axis-0',
+                value: previousClose,
+                borderColor: 'rgba(0,0,0,0.5)',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                label: {
+                    enabled: true,
+                    content: `昨收 ${previousClose}`,
+                    position: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    fontColor: 'white',
+                    fontSize: 36,
+                    fontStyle: 'bold',
+                    xAdjust: 250, // Center anchor, push right safely inside bounds
+                    yAdjust: -30
+                }
+            });
+        }
+
+        if (currentPrice !== null) {
+            const isUp = previousClose ? currentPrice >= previousClose : true;
+            annotationsArray.push({
+                type: 'line',
+                mode: 'horizontal',
+                scaleID: 'y-axis-0',
+                value: currentPrice,
+                borderColor: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
+                borderWidth: 1,
+                borderDash: [2, 2],
+                label: {
+                    enabled: true,
+                    content: `現價 ${currentPrice}`,
+                    position: 'left',
+                    backgroundColor: isUp ? 'rgba(255, 99, 132, 0.8)' : 'rgba(75, 192, 192, 0.8)',
+                    fontColor: 'white',
+                    fontSize: 40,
+                    fontStyle: 'bold',
+                    xAdjust: 120, // Push left-side current price label rightward to match
+                    yAdjust: 30
+                }
+            });
+        }
+
         // QuickChart Configuration Object (Standard Chart.js v2/v3 syntax supported by QuickChart)
         const chartConfig = {
             type: 'line',
@@ -134,36 +186,32 @@ class ChartService {
                 scales: {
                     xAxes: [{
                         display: true,
-                        scaleLabel: { display: true, labelString: 'Time (UTC+8)' },
-                        ticks: { maxTicksLimit: 10 }
+                        scaleLabel: { display: false, labelString: 'Time (UTC+8)', fontSize: 32 },
+                        ticks: { maxTicksLimit: 10, fontSize: 30 }
                     }],
                     yAxes: [{
                         display: true,
-                        scaleLabel: { display: true, labelString: 'Price' },
+                        scaleLabel: { display: false, labelString: 'Price', fontSize: 32 },
                         ticks: {
                             min: yAxisMin,
-                            max: yAxisMax
+                            max: yAxisMax,
+                            callback: previousClose ? function (value) {
+                                if (__PREV_CLOSE__ === 0) return value;
+                                var pct = ((value - __PREV_CLOSE__) / __PREV_CLOSE__ * 100).toFixed(2);
+                                var sign = pct > 0 ? '+' : '';
+                                return value + " (" + sign + pct + "%)";
+                            } : undefined,
+                            fontSize: 30 // Reduce Y-axis tick font size
                         }
                     }]
                 },
-                legend: { display: true, position: 'top' },
-                annotation: previousClose ? {
-                    annotations: [{
-                        type: 'line',
-                        mode: 'horizontal',
-                        scaleID: 'y-axis-0',
-                        value: previousClose,
-                        borderColor: 'rgba(0,0,0,0.5)',
-                        borderWidth: 2,
-                        borderDash: [5, 5],
-                        label: {
-                            enabled: true,
-                            content: `昨收 ${previousClose}`,
-                            position: 'right',
-                            backgroundColor: 'rgba(0,0,0,0.5)',
-                            color: 'white'
-                        }
-                    }]
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { fontSize: 36, padding: 25 } // Reduce legend font size
+                },
+                annotation: annotationsArray.length > 0 ? {
+                    annotations: annotationsArray
                 } : undefined
             }
         };
@@ -194,9 +242,10 @@ class ChartService {
                 },
                 body: JSON.stringify({
                     chart: chartConfigStr,
-                    width: 800,
-                    height: 400,
-                    format: 'png'
+                    width: 1000, // Make it more square-like for mobile screens
+                    height: 800, // Taller image occupies more vertical space
+                    format: 'png',
+                    devicePixelRatio: 2.0 // Retain high-DPI crispness
                 })
             });
 
