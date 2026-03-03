@@ -8,11 +8,10 @@
 // We'll write a lightweight formatter to avoid dependencies.
 function formatTimeUTC8(isoString) {
     const d = new Date(isoString);
-    // Add 8 hours for UTC+8 (Fugle data is already in correct TZ if not Z, but let's be safe)
-    // Assuming Fugle date looks like "2023-10-25T09:00:00+08:00"
-    const hours = d.getHours().toString().padStart(2, '0');
-    const minutes = d.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+    // Explicitly grab UTC hours, add 8 for Taiwan timezone, and wrap with %24
+    const twHours = ((d.getUTCHours() + 8) % 24).toString().padStart(2, '0');
+    const twMins = d.getUTCMinutes().toString().padStart(2, '0');
+    return `${twHours}:${twMins}`;
 }
 
 class ChartService {
@@ -42,10 +41,45 @@ class ChartService {
         const labels = sortedCandles.map(c => formatTimeUTC8(c.date));
         const data = sortedCandles.map(c => c.close);
 
+        // Keep track of valid data to compute symmetric Y scale correctly (excluding padding)
+        const validDataValues = [...data];
+
+        // Pad the timeline so the X axis is fixed from 09:00 to 13:30
+        const dateStr = sortedCandles[0].date.substring(0, 10);
+        const endTimeStr = `${dateStr}T13:30:00+08:00`;
+        const endMs = new Date(endTimeStr).getTime();
+
+        let intervalMs = 3 * 60 * 1000;
+        if (sortedCandles.length > 1) {
+            let diff = new Date(sortedCandles[1].date).getTime() - new Date(sortedCandles[0].date).getTime();
+            if (diff > 0 && diff <= 60 * 60 * 1000) {
+                intervalMs = diff;
+            }
+        }
+
+        let lastCandleMs = new Date(sortedCandles[sortedCandles.length - 1].date).getTime();
+
+        // Only pad if intervalMs is valid, and keeping labels length under 200 for QuickChart limits
+        if (intervalMs >= 60000 && labels.length < 200) {
+            while (lastCandleMs + intervalMs <= endMs && labels.length < 200) {
+                lastCandleMs += intervalMs;
+                labels.push(formatTimeUTC8(new Date(lastCandleMs).toISOString()));
+                data.push(null);
+            }
+            if (labels[labels.length - 1] !== '13:30' && labels.length < 200) {
+                labels.push('13:30');
+                data.push(null);
+            }
+            if (labels[0] !== '09:00') {
+                labels.unshift('09:00');
+                data.unshift(null);
+            }
+        }
+
         let yAxisMin, yAxisMax;
         if (previousClose) {
-            const minPrice = Math.min(...data, previousClose);
-            const maxPrice = Math.max(...data, previousClose);
+            const minPrice = Math.min(...validDataValues, previousClose);
+            const maxPrice = Math.max(...validDataValues, previousClose);
             // Calculate largest deviation from previousClose to ensure symmetry
             const maxDiff = Math.max(Math.abs(maxPrice - previousClose), Math.abs(previousClose - minPrice));
             // Add a 10% vertical padding so the top/bottom series aren't cut off
@@ -54,8 +88,8 @@ class ChartService {
             yAxisMin = Math.max(0, previousClose - maxDiff - padding);
             yAxisMax = previousClose + maxDiff + padding;
         } else {
-            const minPrice = Math.min(...data);
-            const maxPrice = Math.max(...data);
+            const minPrice = Math.min(...validDataValues);
+            const maxPrice = Math.max(...validDataValues);
             const padding = (maxPrice - minPrice) * 0.1 || 1;
 
             yAxisMin = Math.max(0, minPrice - padding);
@@ -79,6 +113,7 @@ class ChartService {
                         : 'rgb(255, 99, 132)',
                     // We disable the fill so the point colors stand out, or use a neutral background
                     fill: false,
+                    spanGaps: true,
                     borderWidth: 2,
                     pointRadius: 1, // Show tiny points to let individual colors render
                     segment: {
