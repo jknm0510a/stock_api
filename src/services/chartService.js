@@ -76,24 +76,29 @@ class ChartService {
             }
         }
 
-        let yAxisMin, yAxisMax;
+        let yAxisMin, yAxisMax, yAxisStepSize;
         if (previousClose) {
             const minPrice = Math.min(...validDataValues, previousClose);
             const maxPrice = Math.max(...validDataValues, previousClose);
             // Calculate largest deviation from previousClose to ensure symmetry
-            const maxDiff = Math.max(Math.abs(maxPrice - previousClose), Math.abs(previousClose - minPrice));
-            // Add a 10% vertical padding so the top/bottom series aren't cut off
-            const padding = maxDiff * 0.1 || 1;
+            let maxDiff = Math.max(Math.abs(maxPrice - previousClose), Math.abs(previousClose - minPrice));
+            if (maxDiff === 0) maxDiff = previousClose * 0.01; // Provide a 1% fallback spread if flat
 
-            yAxisMin = Math.max(0, previousClose - maxDiff - padding);
-            yAxisMax = previousClose + maxDiff + padding;
+            // Set exact min/max with zero padding. The chart boundaries will exactly touch the max deviation.
+            yAxisMax = previousClose + maxDiff;
+            yAxisMin = Math.max(0, previousClose - maxDiff);
+
+            // By dividing by 4, we generate exactly 9 ticks: [-maxDiff, -75%, -50%, -25%, 0, ...]
+            yAxisStepSize = maxDiff / 4;
         } else {
             const minPrice = Math.min(...validDataValues);
             const maxPrice = Math.max(...validDataValues);
-            const padding = (maxPrice - minPrice) * 0.1 || 1;
+            let diff = maxPrice - minPrice;
+            if (diff === 0) diff = minPrice * 0.02 || 2;
 
-            yAxisMin = Math.max(0, minPrice - padding);
-            yAxisMax = maxPrice + padding;
+            yAxisMin = minPrice;
+            yAxisMax = maxPrice;
+            yAxisStepSize = diff / 4;
         }
 
         const currentPrice = validDataValues.length > 0 ? validDataValues[validDataValues.length - 1] : null;
@@ -126,24 +131,34 @@ class ChartService {
 
         if (currentPrice !== null) {
             const isUp = previousClose ? currentPrice >= previousClose : true;
+
+            let labelYAdjust = 30; // default below the line
+            if (previousClose) {
+                const range = yAxisMax - yAxisMin;
+                if (currentPrice < yAxisMin + range * 0.15) {
+                    labelYAdjust = -30; // moving it above the line if hitting bottom limit
+                }
+            } else {
+                labelYAdjust = -30;
+            }
+
             annotationsArray.push({
                 type: 'line',
                 mode: 'horizontal',
                 scaleID: 'y-axis-0',
                 value: currentPrice,
-                borderColor: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
-                borderWidth: 1,
-                borderDash: [2, 2],
+                borderColor: 'rgba(0,0,0,0)', // Completely invisible line
+                borderWidth: 0,
                 label: {
                     enabled: true,
-                    content: `現價 ${currentPrice}`,
-                    position: 'left',
-                    backgroundColor: isUp ? 'rgba(255, 99, 132, 0.8)' : 'rgba(75, 192, 192, 0.8)',
-                    fontColor: 'white',
+                    content: currentPrice.toString(),
+                    position: 'center',
+                    backgroundColor: 'rgba(0,0,0,0)', // Transparent text background
+                    fontColor: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
                     fontSize: 40,
                     fontStyle: 'bold',
-                    xAdjust: 120, // Push left-side current price label rightward to match
-                    yAdjust: 30
+                    xAdjust: 350, // Center anchor, push right safely inside bounds
+                    yAdjust: labelYAdjust
                 }
             });
         }
@@ -183,6 +198,9 @@ class ChartService {
                 }]
             },
             options: {
+                layout: {
+                    padding: { bottom: 60 } // Add bottom padding so the datalabel doesn't hit the X-axis when near the bottom
+                },
                 scales: {
                     xAxes: [{
                         display: true,
@@ -195,11 +213,14 @@ class ChartService {
                         ticks: {
                             min: yAxisMin,
                             max: yAxisMax,
+                            stepSize: yAxisStepSize, // Explicit step guarantees no auto-generated overlapping ticks
                             callback: previousClose ? function (value) {
                                 if (__PREV_CLOSE__ === 0) return value;
-                                var pct = ((value - __PREV_CLOSE__) / __PREV_CLOSE__ * 100).toFixed(2);
+                                // Clean up JS floating point drift (e.g. 210.000000000001)
+                                var cleanVal = Number(value.toFixed(2));
+                                var pct = ((cleanVal - __PREV_CLOSE__) / __PREV_CLOSE__ * 100).toFixed(2);
                                 var sign = pct > 0 ? '+' : '';
-                                return value + " (" + sign + pct + "%)";
+                                return cleanVal + " (" + sign + pct + "%)";
                             } : undefined,
                             fontSize: 30 // Reduce Y-axis tick font size
                         }
@@ -229,7 +250,9 @@ class ChartService {
                 .replace(/"(function.*?})"/g, (match, p1) => {
                     return p1.replace(/\\n/g, '').replace(/\\"/g, '"');
                 })
-                .replace(/__PREV_CLOSE__/g, previousClose || 0);
+                .replace(/__PREV_CLOSE__/g, previousClose || 0)
+                .replace(/__Y_AXIS_MAX__/g, yAxisMax || 0)
+                .replace(/__Y_AXIS_MIN__/g, yAxisMin || 0);
         };
 
         const chartConfigStr = serializeConfig(chartConfig);
