@@ -201,17 +201,20 @@ class ChartService {
         }
 
 
-        // Prepare the custom title dynamic variables
         let headerPriceStr = "";
         let headerIsUp = true;
         if (currentPrice !== null && previousClose) {
-            const pctVal = ((currentPrice - previousClose) / previousClose * 100).toFixed(2);
-            headerIsUp = currentPrice >= previousClose;
+            const diffVal = currentPrice - previousClose;
+            const pctVal = (diffVal / previousClose * 100).toFixed(2);
+            headerIsUp = diffVal >= 0;
             const sign = headerIsUp ? '+' : '';
             const arrow = headerIsUp ? '▲' : '▼';
-            // Remove trailing zeros for a cleaner look if it's perfectly round like 5.00 -> 5
+
+            // Clean up numbers for display
+            const displayDiff = parseFloat(diffVal.toFixed(2)).toString();
             const displayPct = parseFloat(pctVal).toString();
-            headerPriceStr = `${currentPrice} (${sign}${displayPct}%) ${arrow}`;
+
+            headerPriceStr = `${currentPrice} ${arrow}  ${sign}${displayDiff}  (${sign}${displayPct}%)`;
         } else if (currentPrice !== null) {
             headerPriceStr = `${currentPrice}`;
         }
