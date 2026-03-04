@@ -17,19 +17,23 @@ function formatTimeUTC8(isoString) {
 class ChartService {
 
     /**
-     * Generates a QuickChart URL for the trend chart
-     * @param {string} symbol - Stock symbol
-     * @param {Array} candles - Array of candle data objects from Fugle API
-     * @param {number} previousClose - Yesterday's closing price
-     * @returns {Promise<string>} - QuickChart Image Short URL
+     * @param {string} symbol - Equity symbol
+     * @param {string} name - Display name
+     * @param {Array} candles - Fugle Intraday Candles
+     * @param {number|null} previousClose - The previous day's closing price
+     * @returns {string} - The JSON string payload for QuickChart natively
      */
-    async generateTrendChartUrl(symbol, candles, previousClose) {
+    generateTrendChartPayload(symbol, name, candles, previousClose) {
         if (!candles || candles.length === 0) {
             throw new Error('No candle data available to generate chart');
         }
 
         // Sort ascending by time
         let sortedCandles = [...candles].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        if (!sortedCandles || sortedCandles.length === 0) {
+            throw new Error('No valid candle data available after processing');
+        }
 
         // QuickChart free tier has a limit of around 200-266 data points per chart
         // If we have more than 200 points, we downsample by taking every Nth candle
@@ -109,23 +113,23 @@ class ChartService {
         if (previousClose) {
             annotationsArray.push({
                 type: 'line',
-                mode: 'horizontal',
-                scaleID: 'y-axis-0',
-                value: previousClose,
+                yMin: previousClose,
+                yMax: previousClose,
                 borderColor: 'rgba(0,0,0,0.5)',
                 borderWidth: 2,
-                borderDash: [5, 5],
-                label: {
-                    enabled: true,
-                    content: `昨收 ${previousClose}`,
-                    position: 'center',
-                    backgroundColor: 'rgba(0,0,0,0.5)',
-                    fontColor: 'white',
-                    fontSize: 36,
-                    fontStyle: 'bold',
-                    xAdjust: 250, // Center anchor, push right safely inside bounds
-                    yAdjust: -30
-                }
+                borderDash: [5, 5]
+            });
+            annotationsArray.push({
+                type: 'label',
+                xValue: '09:00', // Anchor to the exact start of the chart
+                yValue: previousClose,
+                content: `昨收 ${previousClose}`,
+                display: true,
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                color: 'white',
+                font: { size: 36, weight: 'bold' },
+                xAdjust: 110, // Push inward safely from the start
+                yAdjust: -30
             });
         }
 
@@ -143,27 +147,40 @@ class ChartService {
             }
 
             annotationsArray.push({
-                type: 'line',
-                mode: 'horizontal',
-                scaleID: 'y-axis-0',
-                value: currentPrice,
-                borderColor: 'rgba(0,0,0,0)', // Completely invisible line
-                borderWidth: 0,
-                label: {
-                    enabled: true,
-                    content: currentPrice.toString(),
-                    position: 'center',
-                    backgroundColor: 'rgba(0,0,0,0)', // Transparent text background
-                    fontColor: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
-                    fontSize: 40,
-                    fontStyle: 'bold',
-                    xAdjust: 350, // Center anchor, push right safely inside bounds
-                    yAdjust: labelYAdjust
-                }
+                type: 'label',
+                xValue: '09:00', // Anchor to the exact start of the chart
+                yValue: currentPrice,
+                content: currentPrice.toString(),
+                display: true,
+                backgroundColor: 'rgba(0,0,0,0)', // Transparent text background
+                color: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
+                font: { size: 40, weight: 'bold' },
+                xAdjust: 50, // Push inward slightly
+                yAdjust: labelYAdjust
             });
         }
 
-        // QuickChart Configuration Object (Standard Chart.js v2/v3 syntax supported by QuickChart)
+        // Prepare the custom title dynamic variables
+        let headerPriceStr = "";
+        let headerIsUp = true;
+        if (currentPrice !== null && previousClose) {
+            const pctVal = ((currentPrice - previousClose) / previousClose * 100).toFixed(2);
+            headerIsUp = currentPrice >= previousClose;
+            const sign = headerIsUp ? '+' : '';
+            const arrow = headerIsUp ? '▲' : '▼';
+            // Remove trailing zeros for a cleaner look if it's perfectly round like 5.00 -> 5
+            const displayPct = parseFloat(pctVal).toString();
+            headerPriceStr = `${currentPrice} (${sign}${displayPct}%) ${arrow}`;
+        } else if (currentPrice !== null) {
+            headerPriceStr = `${currentPrice}`;
+        }
+
+        const titleStr1 = name ? `${symbol} ${name}` : symbol;
+        const titleStr1Color = '#333333';
+        const titleStr2 = headerPriceStr;
+        const titleStr2Color = headerIsUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
+
+        // QuickChart Configuration Object (Chart.js v3 syntax)
         const chartConfig = {
             type: 'line',
             data: {
@@ -178,7 +195,6 @@ class ChartService {
                             return value >= __PREV_CLOSE__ ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
                         }
                         : 'rgb(255, 99, 132)',
-                    // We disable the fill so the point colors stand out, or use a neutral background
                     fill: false,
                     spanGaps: true,
                     borderWidth: 2,
@@ -186,6 +202,7 @@ class ChartService {
                     segment: {
                         borderColor: previousClose
                             ? function (context) {
+                                if (!context.p0.parsed || !context.p1.parsed) return 'rgb(200, 200, 200)';
                                 var p0 = context.p0.parsed.y;
                                 var p1 = context.p1.parsed.y;
                                 if (p0 >= __PREV_CLOSE__ && p1 >= __PREV_CLOSE__) return 'rgb(255, 99, 132)';
@@ -199,41 +216,55 @@ class ChartService {
             },
             options: {
                 layout: {
-                    padding: { bottom: 60 } // Add bottom padding so the datalabel doesn't hit the X-axis when near the bottom
+                    padding: { left: 10, right: 10, bottom: 20 }
                 },
                 scales: {
-                    xAxes: [{
+                    x: {
                         display: true,
-                        scaleLabel: { display: false, labelString: 'Time (UTC+8)', fontSize: 32 },
-                        ticks: { maxTicksLimit: 10, fontSize: 30 }
-                    }],
-                    yAxes: [{
+                        ticks: { maxTicksLimit: 10, font: { size: 30 } }
+                    },
+                    y: {
                         display: true,
-                        scaleLabel: { display: false, labelString: 'Price', fontSize: 32 },
+                        min: yAxisMin,
+                        max: yAxisMax,
                         ticks: {
-                            min: yAxisMin,
-                            max: yAxisMax,
                             stepSize: yAxisStepSize, // Explicit step guarantees no auto-generated overlapping ticks
                             callback: previousClose ? function (value) {
                                 if (__PREV_CLOSE__ === 0) return value;
-                                // Clean up JS floating point drift (e.g. 210.000000000001)
+                                /* Clean up JS floating point drift */
                                 var cleanVal = Number(value.toFixed(2));
                                 var pct = ((cleanVal - __PREV_CLOSE__) / __PREV_CLOSE__ * 100).toFixed(2);
                                 var sign = pct > 0 ? '+' : '';
                                 return cleanVal + " (" + sign + pct + "%)";
                             } : undefined,
-                            fontSize: 30 // Reduce Y-axis tick font size
+                            font: { size: 30 }
                         }
-                    }]
+                    }
                 },
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: { fontSize: 36, padding: 25 } // Reduce legend font size
-                },
-                annotation: annotationsArray.length > 0 ? {
-                    annotations: annotationsArray
-                } : undefined
+                plugins: {
+                    legend: {
+                        display: false // Hide the default legend
+                    },
+                    annotation: annotationsArray.length > 0 ? {
+                        annotations: annotationsArray
+                    } : undefined,
+                    title: {
+                        display: true,
+                        align: 'start', // Align title to the left
+                        text: titleStr1,
+                        color: titleStr1Color,
+                        font: { size: 54, family: 'sans-serif' },
+                        padding: { top: 20, bottom: 10, left: 10 }
+                    },
+                    subtitle: {
+                        display: true,
+                        align: 'start', // Align subtitle to the left
+                        text: titleStr2,
+                        color: titleStr2Color,
+                        font: { size: 50, family: 'sans-serif', weight: 'bold' },
+                        padding: { bottom: 60, left: 10 }
+                    }
+                }
             }
         };
 
@@ -241,55 +272,39 @@ class ChartService {
         const serializeConfig = (obj) => {
             const str = JSON.stringify(obj, function (key, val) {
                 if (typeof val === 'function') {
-                    return val.toString();
+                    // Minify the function to a single line just to be safe
+                    return val.toString().replace(/\n/g, '').replace(/\s{2,}/g, ' ');
                 }
                 return val;
             });
             // Unquote the functions and replace our placeholder marker
             return str
                 .replace(/"(function.*?})"/g, (match, p1) => {
-                    return p1.replace(/\\n/g, '').replace(/\\"/g, '"');
+                    return p1.replace(/\\"/g, '"');
                 })
                 .replace(/__PREV_CLOSE__/g, previousClose || 0)
                 .replace(/__Y_AXIS_MAX__/g, yAxisMax || 0)
-                .replace(/__Y_AXIS_MIN__/g, yAxisMin || 0);
+                .replace(/__Y_AXIS_MIN__/g, yAxisMin || 0)
+                .replace(/__TITLE_STR_1__/g, titleStr1)
+                .replace(/__TITLE_STR_2__/g, titleStr2)
+                .replace(/__TITLE_STR_1_COLOR__/g, titleStr1Color)
+                .replace(/__TITLE_STR_2_COLOR__/g, titleStr2Color);
         };
 
         const chartConfigStr = serializeConfig(chartConfig);
 
-        try {
-            const response = await fetch('https://quickchart.io/chart/create', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    chart: chartConfigStr,
-                    width: 1000, // Make it more square-like for mobile screens
-                    height: 800, // Taller image occupies more vertical space
-                    format: 'png',
-                    devicePixelRatio: 2.0 // Retain high-DPI crispness
-                })
-            });
+        const quickChartPayload = {
+            version: '3', // Force Chart.js v3 for native dual colored titles
+            backgroundColor: 'white', // Force white background so it's not black in LINE full-screen
+            chart: chartConfigStr,
+            width: 1000, // Make it more square-like for mobile screens
+            height: 1000, // Increase height to cleanly hold the two-line title
+            format: 'png',
+            devicePixelRatio: 2.0 // Retain high-DPI crispness
+        };
 
-            if (!response.ok) {
-                const text = await response.text();
-                throw new Error(`QuickChart API Error: ${response.status} ${text}`);
-            }
-
-            const responseJson = await response.json();
-            if (!responseJson.success) {
-                throw new Error('QuickChart failed to generate short URL');
-            }
-
-            // QuickChart's url looks like: https://quickchart.io/chart/render/zf-xxx 
-            // We return just the ID so our own proxy can serve it with a clean .png extension
-            return responseJson.url.split('/').pop();
-        } catch (error) {
-            console.error('Error generating short URL with QuickChart:', error);
-            throw error;
-        }
+        return JSON.stringify(quickChartPayload);
     }
 }
 
-export default new ChartService();
+module.exports = new ChartService();

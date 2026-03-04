@@ -11,9 +11,14 @@
 - 使用時在header加入我的身份驗證X-API-KEY:Y2QzMzAyNzYtMjYzNy00NzhhLTk4MTYtYWZhMDdkYjgzNzQxIDNlMGI4M2NhLTEzMGMtNDk1OS04ZGZiLThkMmNjZDI0ZjI0ZA==
 - 身份驗證需要做特殊處理不能顯示出來，該專案因為上傳到git repository上，並且為public身份，所以公開api key是不被允許的
 - 目前設定以line bot為主，日後可擴充至其他前端介面
+## 全股票列表索取更新
+- 透過/intraday/tickers取得
+- 取得兩次，參數分別帶入?type=EQUITY&exchange=TWSE&market=TSE、?type=INDEX&exchange=TWSE&market=TSE拿取股票和指數至兩種type的基本股市資料
+- 取得時機點為每天早上9點整，更新整份資料
+- 資料存入資料庫內，以供索引，只需存入symbol和name就可以
 ## 查詢特定股票盤中訊息
 - 透過/intraday/candles/{symbol}取得該股票
-- line bot可以使用/search 2330觸發該功能
+- line bot可以使用/search 233或是/search 台積電觸發該功能
 - 取得的1分k將會傳回到line bot中
 - line bot會繪製成趨勢圖傳送到使用者的line訊息內
 - 趨勢圖以昨日收盤價為中線，昨日收盤價可以從/intraday/ticker/{symbol}取得，並且昨日收盤價上方為紅，下方為綠，昨日收盤價會在圖中劃出一條橫線

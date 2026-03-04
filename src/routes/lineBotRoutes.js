@@ -107,22 +107,45 @@ app.post('/', async (c) => {
     return c.json({ success: true });
 });
 
-// Proxy route for serving images directly with a clean .png extension
+// Proxy route for serving images synchronously on-demand with clean POST API
 app.get('/image/:id', async (c) => {
-    const idWithExt = c.req.param('id');
-    const id = idWithExt.replace('.png', '');
-    const quickChartUrl = `https://quickchart.io/chart/render/${id}`;
+    const symbolWithExt = c.req.param('id');
+    const symbol = symbolWithExt.replace('.png', '');
 
-    const response = await fetch(quickChartUrl);
-    if (!response.ok) {
-        return c.text('Image not found', 404);
+    // Grab the query variables injected by our webhook handler
+    const env = c.env;
+    const prevStr = c.req.query('prev');
+    const name = c.req.query('name') || symbol;
+
+    try {
+        // Fetch intraday candles right now on the fly
+        const candlesRes = await fugleService.getIntradayCandles(symbol, env.FUGLE_API_KEY, 3);
+        const candles = candlesRes?.data || [];
+
+        // Build the precise payload JSON string
+        const parsedPrev = (prevStr && !isNaN(Number(prevStr))) ? Number(prevStr) : null;
+        const chartPayloadStr = chartService.generateTrendChartPayload(symbol, name, candles, parsedPrev);
+
+        // Direct POST to the raw QuickChart binary rendering engine (bypasses ALL Short URL sandbox issues)
+        const response = await fetch('https://quickchart.io/chart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: chartPayloadStr
+        });
+
+        if (!response.ok) {
+            return c.text('Quickchart Render Generation Failed', response.status);
+        }
+
+        const headers = new Headers();
+        headers.set('Content-Type', 'image/png');
+        headers.set('Cache-Control', 'public, max-age=60'); // 1 minute local cache
+
+        return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+        console.error('Proxy Image Error:', error);
+        return c.text('Internal Image Proxy Error', 500);
     }
-
-    const headers = new Headers();
-    headers.set('Content-Type', 'image/png');
-    headers.set('Cache-Control', 'public, max-age=31536000');
-
-    return new Response(response.body, { status: 200, headers });
 });
 
 async function handleEvent(event, c) {
@@ -205,14 +228,10 @@ async function handleEvent(event, c) {
             }], channelAccessToken);
         }
 
-        // 3. Generate Chart URL (QuickChart)
-        // Use resolved name in the chart so it shows clearly!
-        const imageId = await chartService.generateTrendChartUrl(displayName, candles, previousClose);
-
-        // 4. Construct proxy URL ensuring it's HTTPS and native .png
-        // Note: Since this proxy code executes asynchronously, we need the origin of the initial request.
+        // 3. Construct proxy URL ensuring it's HTTPS and native .png
+        // The image GET handler will do ALL the heavy lifting dynamically! 
         const urlObj = new URL(reqUrl);
-        const imageUrl = `${urlObj.origin}/webhook/image/${imageId}.png`;
+        const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}`;
 
         // 5. Send Image via Push Message
         return await pushMessage(event.source.userId, [{
