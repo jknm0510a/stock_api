@@ -81,28 +81,38 @@ class ChartService {
         }
 
         let yAxisMin, yAxisMax, yAxisStepSize;
-        if (previousClose) {
-            const minPrice = Math.min(...validDataValues, previousClose);
-            const maxPrice = Math.max(...validDataValues, previousClose);
-            // Calculate largest deviation from previousClose to ensure symmetry
-            let maxDiff = Math.max(Math.abs(maxPrice - previousClose), Math.abs(previousClose - minPrice));
-            if (maxDiff === 0) maxDiff = previousClose * 0.01; // Provide a 1% fallback spread if flat
+        let lineHigh = null, lineLow = null;
 
-            // Set exact min/max with zero padding. The chart boundaries will exactly touch the max deviation.
-            yAxisMax = previousClose + maxDiff;
-            yAxisMin = Math.max(0, previousClose - maxDiff);
+        if (validDataValues.length > 0) {
+            lineLow = Math.min(...validDataValues);
+            lineHigh = Math.max(...validDataValues);
+        }
 
-            // By dividing by 4, we generate exactly 9 ticks: [-maxDiff, -75%, -50%, -25%, 0, ...]
-            yAxisStepSize = maxDiff / 4;
+        if (previousClose && validDataValues.length > 0) {
+            // 1. 如果目前折線最高價低於昨日收盤則以昨日收盤為頂，否則以折線最高價為頂
+            const topPrice = Math.max(lineHigh, previousClose);
+            // 2. 如果目前折線最低價高於昨日收盤則已昨日收盤為底，否則已折線最低價為底
+            const bottomPrice = Math.min(lineLow, previousClose);
+
+            // 3. 刻度顯示從頂部價格到底部價格五等分
+            let diff = topPrice - bottomPrice;
+            if (diff === 0) diff = previousClose * 0.01; // fallback
+
+            yAxisStepSize = diff / 5;
+
+            // 4. 上面刻度決定好後頂底各多加一分刻度當作緩衝
+            yAxisMax = topPrice + yAxisStepSize;
+            yAxisMin = Math.max(0, bottomPrice - yAxisStepSize);
+        } else if (validDataValues.length > 0) {
+            // Fallback if no previousClose
+            let diff = lineHigh - lineLow;
+            if (diff === 0) diff = lineLow * 0.02 || 2;
+
+            yAxisStepSize = diff / 5;
+            yAxisMax = lineHigh + yAxisStepSize;
+            yAxisMin = Math.max(0, lineLow - yAxisStepSize);
         } else {
-            const minPrice = Math.min(...validDataValues);
-            const maxPrice = Math.max(...validDataValues);
-            let diff = maxPrice - minPrice;
-            if (diff === 0) diff = minPrice * 0.02 || 2;
-
-            yAxisMin = minPrice;
-            yAxisMax = maxPrice;
-            yAxisStepSize = diff / 4;
+            yAxisMin = 0; yAxisMax = 100; yAxisStepSize = 20;
         }
 
         const currentPrice = validDataValues.length > 0 ? validDataValues[validDataValues.length - 1] : null;
@@ -111,6 +121,7 @@ class ChartService {
         const annotationsArray = [];
 
         if (previousClose) {
+            // 6. 刻度顯示昨日收盤價(文字顏色區分)並在折線圖中貫穿一條橫向虛線表示
             annotationsArray.push({
                 type: 'line',
                 yMin: previousClose,
@@ -133,32 +144,62 @@ class ChartService {
             });
         }
 
-        if (currentPrice !== null) {
-            const isUp = previousClose ? currentPrice >= previousClose : true;
+        if (previousClose && validDataValues.length > 0) {
+            // Find the timestamp of the highest and lowest points to anchor the labels
+            let highXIndex = data.indexOf(lineHigh);
+            let lowXIndex = data.indexOf(lineLow);
 
-            let labelYAdjust = 30; // default below the line
-            if (previousClose) {
-                const range = yAxisMax - yAxisMin;
-                if (currentPrice < yAxisMin + range * 0.15) {
-                    labelYAdjust = -30; // moving it above the line if hitting bottom limit
-                }
-            } else {
-                labelYAdjust = -30;
-            }
+            let highTime = labels[highXIndex];
+            let lowTime = labels[lowXIndex];
+
+            // Calculate percentage
+            const calcPct = (val) => {
+                const pct = ((val - previousClose) / previousClose * 100).toFixed(2);
+                const sign = pct > 0 ? '+' : '';
+                return `(${sign}${parseFloat(pct)}%)`;
+            };
+
+            // 8. 折線最高點上方顯示最高點價格(+-幅度%)
+            let highXAdj = 0;
+            if (highXIndex < 10) highXAdj = 140;
+            else if (highXIndex > data.length - 10) highXAdj = -140;
 
             annotationsArray.push({
                 type: 'label',
-                xValue: '09:00', // Anchor to the exact start of the chart
-                yValue: currentPrice,
-                content: currentPrice.toString(),
+                xValue: highTime,
+                yValue: lineHigh,
+                content: `${lineHigh} ${calcPct(lineHigh)}`,
                 display: true,
-                backgroundColor: 'rgba(0,0,0,0)', // Transparent text background
-                color: isUp ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)',
-                font: { size: 40, weight: 'bold' },
-                xAdjust: 50, // Push inward slightly
-                yAdjust: labelYAdjust
+                backgroundColor: 'rgba(255, 99, 132, 0.8)', // Red bubble for High
+                color: 'white',
+                font: { size: 30, weight: 'bold' },
+                yAdjust: -30, // Above the point
+                xAdjust: highXAdj
+            });
+
+            // 9. 折線最低點下方顯示最低點價格(+-幅度%)
+            // If high and low happen to be the exact same time/value, slightly offset low to prevent total overlap
+            let bAdjust = 30; // Below the point
+            if (highXIndex === lowXIndex) bAdjust = 70;
+
+            let lowXAdj = 0;
+            if (lowXIndex < 10) lowXAdj = 140;
+            else if (lowXIndex > data.length - 10) lowXAdj = -140;
+
+            annotationsArray.push({
+                type: 'label',
+                xValue: lowTime,
+                yValue: lineLow,
+                content: `${lineLow} ${calcPct(lineLow)}`,
+                display: true,
+                backgroundColor: 'rgba(75, 192, 192, 0.8)', // Green bubble for Low
+                color: 'white',
+                font: { size: 30, weight: 'bold' },
+                yAdjust: bAdjust,
+                xAdjust: lowXAdj
             });
         }
+
 
         // Prepare the custom title dynamic variables
         let headerPriceStr = "";
@@ -253,7 +294,7 @@ class ChartService {
                         align: 'start', // Align title to the left
                         text: titleStr1,
                         color: titleStr1Color,
-                        font: { size: 54, family: 'sans-serif' },
+                        font: { size: 70, family: 'sans-serif' },
                         padding: { top: 20, bottom: 10, left: 10 }
                     },
                     subtitle: {
@@ -261,7 +302,7 @@ class ChartService {
                         align: 'start', // Align subtitle to the left
                         text: titleStr2,
                         color: titleStr2Color,
-                        font: { size: 50, family: 'sans-serif', weight: 'bold' },
+                        font: { size: 60, family: 'sans-serif', weight: 'bold' },
                         padding: { bottom: 60, left: 10 }
                     }
                 }
@@ -297,8 +338,8 @@ class ChartService {
             version: '3', // Force Chart.js v3 for native dual colored titles
             backgroundColor: 'white', // Force white background so it's not black in LINE full-screen
             chart: chartConfigStr,
-            width: 1000, // Make it more square-like for mobile screens
-            height: 1000, // Increase height to cleanly hold the two-line title
+            width: 1400,
+            height: 1000, // Make the chart wider vertically vs horizontally
             format: 'png',
             devicePixelRatio: 2.0 // Retain high-DPI crispness
         };

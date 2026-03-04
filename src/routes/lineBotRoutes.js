@@ -231,13 +231,37 @@ async function handleEvent(event, c) {
         // 3. Construct proxy URL ensuring it's HTTPS and native .png
         // The image GET handler will do ALL the heavy lifting dynamically! 
         const urlObj = new URL(reqUrl);
-        const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}`;
+        const ts = Date.now();
+        const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}&t=${ts}`;
 
-        // 5. Send Image via Push Message
+        // 5. Send Image via Push Message (using Flex Message)
+        const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}`;
         return await pushMessage(event.source.userId, [{
-            type: 'image',
-            originalContentUrl: imageUrl,
-            previewImageUrl: imageUrl
+            type: 'flex',
+            altText: `查閱 ${displayName} 最新走勢圖`,
+            contents: {
+                type: 'bubble',
+                size: 'giga',
+                body: {
+                    type: 'box',
+                    layout: 'vertical',
+                    paddingAll: '0px',
+                    action: {
+                        type: 'uri',
+                        label: '開啟 Yahoo 股市',
+                        uri: yahooFinanceUrl
+                    },
+                    contents: [
+                        {
+                            type: 'image',
+                            url: imageUrl,
+                            size: 'full',
+                            aspectRatio: '1.4:1',
+                            aspectMode: 'cover'
+                        }
+                    ]
+                }
+            }
         }], channelAccessToken);
 
     } catch (error) {
