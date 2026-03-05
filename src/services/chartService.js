@@ -35,10 +35,10 @@ class ChartService {
             throw new Error('No valid candle data available after processing');
         }
 
-        // QuickChart free tier has a limit of around 200-266 data points per chart
-        // If we have more than 200 points, we downsample by taking every Nth candle
-        if (sortedCandles.length > 200) {
-            const step = Math.ceil(sortedCandles.length / 200);
+        // QuickChart free tier has a limit of around 300-400 data points per chart
+        // If we have more than 400 points, we downsample by taking every Nth candle
+        if (sortedCandles.length > 400) {
+            const step = Math.ceil(sortedCandles.length / 400);
             sortedCandles = sortedCandles.filter((_, index) => index % step === 0 || index === sortedCandles.length - 1);
         }
 
@@ -63,14 +63,14 @@ class ChartService {
 
         let lastCandleMs = new Date(sortedCandles[sortedCandles.length - 1].date).getTime();
 
-        // Only pad if intervalMs is valid, and keeping labels length under 200 for QuickChart limits
-        if (intervalMs >= 60000 && labels.length < 200) {
-            while (lastCandleMs + intervalMs <= endMs && labels.length < 200) {
+        // Only pad if intervalMs is valid, and keeping labels length under 400 for QuickChart limits
+        if (intervalMs >= 60000 && labels.length < 400) {
+            while (lastCandleMs + intervalMs <= endMs && labels.length < 400) {
                 lastCandleMs += intervalMs;
                 labels.push(formatTimeUTC8(new Date(lastCandleMs).toISOString()));
                 data.push(null);
             }
-            if (labels[labels.length - 1] !== '13:30' && labels.length < 200) {
+            if (labels[labels.length - 1] !== '13:30' && labels.length < 400) {
                 labels.push('13:30');
                 data.push(null);
             }
@@ -265,7 +265,20 @@ class ChartService {
                 scales: {
                     x: {
                         display: true,
-                        ticks: { maxTicksLimit: 10, font: { size: 30 } }
+                        ticks: {
+                            font: { size: 30 },
+                            maxRotation: 0, // Keep labels horizontal
+                            minRotation: 0,
+                            autoSkip: false, // Force check every tick
+                            callback: function (val, index) {
+                                var labelsArr = __LABELS_ARRAY__;
+                                var label = labelsArr[index] || '';
+                                if (label.endsWith(':00') || label.endsWith(':30')) {
+                                    return label;
+                                }
+                                return null;
+                            }
+                        }
                     },
                     y: {
                         display: true,
@@ -326,6 +339,8 @@ class ChartService {
                 .replace(/"(function.*?})"/g, (match, p1) => {
                     return p1.replace(/\\"/g, '"');
                 })
+                .replace(/'__LABELS_ARRAY__'/g, JSON.stringify(labels))
+                .replace(/__LABELS_ARRAY__/g, JSON.stringify(labels))
                 .replace(/__PREV_CLOSE__/g, previousClose || 0)
                 .replace(/__Y_AXIS_MAX__/g, yAxisMax || 0)
                 .replace(/__Y_AXIS_MIN__/g, yAxisMin || 0)

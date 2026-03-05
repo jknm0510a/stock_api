@@ -183,6 +183,12 @@ async function handleEvent(event, c) {
         let realSymbol = queryTerm;
         let realName = queryTerm;
 
+        // Fast-path aliases for common names (e.g. Taiwan Weighted Index)
+        if (queryTerm === '大盤' || queryTerm === '加權' || queryTerm === '加權指數') {
+            queryTerm = 'IX0001';
+            realSymbol = 'IX0001';
+        }
+
         // Try explicit symbol or EXACT name search first
         let stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE symbol = ? OR name = ? LIMIT 1');
         let match = await stmt.bind(queryTerm, queryTerm).first();
@@ -211,9 +217,9 @@ async function handleEvent(event, c) {
             text: `查詢 ${displayName} 盤中資訊中，請稍候...`
         }], channelAccessToken);
 
-        // 2. Fetch data from Fugle (timeframe=3 as requested by user)
+        // 2. Fetch data from Fugle (timeframe=1 as requested by user)
         const [candlesRes, tickerRes] = await Promise.all([
-            fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 3),
+            fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 1),
             fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
         ]);
 
