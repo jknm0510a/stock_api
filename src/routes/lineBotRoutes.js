@@ -207,8 +207,67 @@ async function handleEvent(event, c) {
             fugleService.getIntradayQuote(r.symbol, env.FUGLE_API_KEY).catch(() => null)
         );
         const quotes = await Promise.all(quotePromises);
-
-        const flexContents = [];
+        const flexContents = [
+            // Header Row
+            {
+                type: 'box',
+                layout: 'horizontal',
+                paddingAll: '10px',
+                spacing: 'md',
+                contents: [
+                    {
+                        type: 'box',
+                        layout: 'vertical',
+                        flex: 1,
+                        contents: [
+                            {
+                                type: 'text',
+                                text: '名稱/代號',
+                                weight: 'bold',
+                                size: 'xs',
+                                color: '#888888'
+                            },
+                            {
+                                type: 'text',
+                                text: '成交量',
+                                weight: 'bold',
+                                size: 'xs',
+                                color: '#888888',
+                                margin: 'sm'
+                            }
+                        ]
+                    },
+                    {
+                        type: 'box',
+                        layout: 'vertical',
+                        flex: 1,
+                        contents: [
+                            {
+                                type: 'text',
+                                text: '現價',
+                                weight: 'bold',
+                                size: 'xs',
+                                color: '#888888',
+                                align: 'end'
+                            },
+                            {
+                                type: 'text',
+                                text: '差價 (+-%)',
+                                weight: 'bold',
+                                size: 'xs',
+                                color: '#888888',
+                                align: 'end',
+                                margin: 'sm'
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                type: 'separator',
+                margin: 'sm'
+            }
+        ];
 
         for (let i = 0; i < results.length; i++) {
             const item = results[i];
@@ -216,6 +275,7 @@ async function handleEvent(event, c) {
 
             let priceStr = '--';
             let diffStr = '--';
+            let volStr = '-- 張';
             let color = '#777777';
             let arrow = '';
 
@@ -225,6 +285,16 @@ async function handleEvent(event, c) {
                 const changePct = quote.changePercent || 0;
 
                 priceStr = price.toString();
+
+                // Compute trading volume
+                if (quote.total && quote.total.tradeVolume !== undefined) {
+                    const vols = quote.total.tradeVolume;
+                    if (vols >= 1000) {
+                        volStr = (vols / 1000).toFixed(1) + 'k';
+                    } else {
+                        volStr = vols.toString(); // display raw number if under 1k
+                    }
+                }
 
                 if (change > 0) {
                     color = '#ff3333'; // Red for up
@@ -244,39 +314,62 @@ async function handleEvent(event, c) {
                 type: 'box',
                 layout: 'horizontal',
                 paddingAll: '10px',
-                spacing: 'sm',
+                spacing: 'md',
                 action: {
                     type: 'message',
                     label: '查走勢',
                     text: item.symbol
                 },
                 contents: [
+                    // Left Column (Name & Volume)
                     {
-                        type: 'text',
-                        text: `${item.symbol} ${item.name}`,
-                        weight: 'bold',
-                        size: 'sm',
-                        color: '#333333',
-                        flex: 4
+                        type: 'box',
+                        layout: 'vertical',
+                        flex: 1,
+                        contents: [
+                            {
+                                type: 'text',
+                                text: `${item.symbol} ${item.name}`,
+                                weight: 'bold',
+                                size: 'sm',
+                                color: '#333333',
+                                wrap: true
+                            },
+                            {
+                                type: 'text',
+                                text: volStr,
+                                size: 'xs',
+                                color: '#666666',
+                                margin: 'sm',
+                                wrap: true
+                            }
+                        ]
                     },
+                    // Right Column (Price & Diff)
                     {
-                        type: 'text',
-                        text: `${arrow}${priceStr}`,
-                        weight: 'bold',
-                        size: 'sm',
-                        color: color,
-                        align: 'end',
-                        flex: 3,
-                        wrap: true
-                    },
-                    {
-                        type: 'text',
-                        text: diffStr,
-                        size: 'xs',
-                        color: color,
-                        align: 'end',
-                        flex: 3,
-                        wrap: true
+                        type: 'box',
+                        layout: 'vertical',
+                        flex: 1,
+                        contents: [
+                            {
+                                type: 'text',
+                                text: `${arrow}${priceStr}`,
+                                weight: 'bold',
+                                size: 'sm',
+                                color: color,
+                                align: 'end',
+                                wrap: true
+                            },
+                            {
+                                type: 'text',
+                                text: diffStr,
+                                size: 'xs',
+                                color: color,
+                                align: 'end',
+                                margin: 'sm',
+                                wrap: true
+                            }
+                        ]
                     }
                 ]
             });
