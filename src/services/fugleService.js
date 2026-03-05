@@ -133,6 +133,37 @@ class FugleService {
     }
 
     /**
+     * 取得股票即時報價（包含現價、漲跌、漲跌幅）
+     * @param {string} symbol - 股票代碼
+     * @param {string} apiKey - API 金鑰
+     * @returns {Promise<Object>}
+     */
+    async getIntradayQuote(symbol, apiKey) {
+        if (!apiKey) {
+            throw new Error('API Key missing');
+        }
+
+        try {
+            const url = `${this.baseUrl}/intraday/quote/${symbol}`;
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-API-KEY': apiKey
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`Fugle API responded with status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error(`Error fetching intraday quote for ${symbol}:`, error.message);
+            throw error;
+        }
+    }
+
+    /**
      * 取得全股號/指數列表
      * @param {string} apiKey - 來自 Cloudflare Environment 的 API 金鑰
      * @returns {Promise<Array>} 包含 symbol, name, type 等資訊的陣列

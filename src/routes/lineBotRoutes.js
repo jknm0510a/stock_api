@@ -163,13 +163,32 @@ async function handleEvent(event, c) {
 
     // Logic: In 1-on-1 chat, everything is a search query unless it's a specific command.
     // In groups, require '/search ' or the specific commands
-    const isWatchlistCommand = text.startsWith('/add ') || text === '/list' || text.startsWith('/remove ');
+    const isWatchlistCommand = text.startsWith('/add ') || text === '/list' || text.startsWith('/remove ') || text === '/help';
     if (!isPrivateChat && !isSearchCommand && !isWatchlistCommand) {
         return; // Ignore regular messages in groups/rooms
     }
 
     const userId = event.source.userId;
     const extDB = env.DB;
+
+    // Handle /help command
+    if (text === '/help') {
+        const helpMsg = `🤖 股市機器人使用指南\n\n`
+            + `👉【查詢走勢】\n`
+            + `直接輸入股票代碼或名稱 (例如: 2330 或 台積電)。\n`
+            + `包含大盤走勢 (輸入: 大盤 或 加權指數)。\n`
+            + `※ 群組內請使用: /search 2330\n\n`
+            + `👉【個人追蹤清單】\n`
+            + `➕ /add [股票]：加入追蹤清單\n`
+            + `➖ /remove [股票]：移除追蹤清單\n`
+            + `📋 /list：查看你的專屬清單\n\n`
+            + `💡 小提示：大盤1分K支援成交量與即時漲跌色標喔！`;
+
+        return await replyMessage(event.replyToken, [{
+            type: 'text',
+            text: helpMsg
+        }], channelAccessToken);
+    }
 
     // Handle /list command
     if (text === '/list') {
@@ -183,10 +202,130 @@ async function handleEvent(event, c) {
             }], channelAccessToken);
         }
 
-        const listStr = results.map(r => `• ${r.symbol} ${r.name}`).join('\n');
+        // Fetch quotes in parallel
+        const quotePromises = results.map(r =>
+            fugleService.getIntradayQuote(r.symbol, env.FUGLE_API_KEY).catch(() => null)
+        );
+        const quotes = await Promise.all(quotePromises);
+
+        const flexContents = [];
+
+        for (let i = 0; i < results.length; i++) {
+            const item = results[i];
+            const quote = quotes[i];
+
+            let priceStr = '--';
+            let diffStr = '--';
+            let color = '#777777';
+            let arrow = '';
+
+            if (quote) {
+                const price = quote.lastPrice || quote.closePrice || quote.referencePrice;
+                const change = quote.change || 0;
+                const changePct = quote.changePercent || 0;
+
+                priceStr = price.toString();
+
+                if (change > 0) {
+                    color = '#ff3333'; // Red for up
+                    arrow = '▲ ';
+                    diffStr = `+${change} (+${changePct}%)`;
+                } else if (change < 0) {
+                    color = '#33cc33'; // Green for down
+                    arrow = '▼ ';
+                    diffStr = `${change} (${changePct}%)`;
+                } else {
+                    color = '#666666'; // Gray for flat
+                    diffStr = `0 (0%)`;
+                }
+            }
+
+            flexContents.push({
+                type: 'box',
+                layout: 'horizontal',
+                paddingAll: '10px',
+                spacing: 'sm',
+                action: {
+                    type: 'message',
+                    label: '查走勢',
+                    text: item.symbol
+                },
+                contents: [
+                    {
+                        type: 'text',
+                        text: `${item.symbol} ${item.name}`,
+                        weight: 'bold',
+                        size: 'sm',
+                        color: '#333333',
+                        flex: 4
+                    },
+                    {
+                        type: 'text',
+                        text: `${arrow}${priceStr}`,
+                        weight: 'bold',
+                        size: 'sm',
+                        color: color,
+                        align: 'end',
+                        flex: 3,
+                        wrap: true
+                    },
+                    {
+                        type: 'text',
+                        text: diffStr,
+                        size: 'xs',
+                        color: color,
+                        align: 'end',
+                        flex: 3,
+                        wrap: true
+                    }
+                ]
+            });
+
+            // Add separator (except last item)
+            if (i < results.length - 1) {
+                flexContents.push({
+                    type: 'separator',
+                    margin: 'xs'
+                });
+            }
+        }
+
+        const bubble = {
+            type: 'bubble',
+            size: 'giga',
+            header: {
+                type: 'box',
+                layout: 'vertical',
+                backgroundColor: '#f5f5f5',
+                contents: [
+                    {
+                        type: 'text',
+                        text: '📋 我的追蹤清單',
+                        weight: 'bold',
+                        size: 'md'
+                    },
+                    {
+                        type: 'text',
+                        text: '點擊任一項目查看即時走勢圖',
+                        size: 'xs',
+                        color: '#888888',
+                        margin: 'sm'
+                    }
+                ]
+            },
+            body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: flexContents,
+                paddingAll: '0px'
+            }
+        };
+
         return await replyMessage(event.replyToken, [{
-            type: 'text',
-            text: `📊 你的專屬追蹤清單：\n\n${listStr}\n\n(若要查詢走勢可直接輸入股票名稱)`
+            type: 'flex',
+            altText: '📋 你的專屬追蹤清單',
+            contents: bubble
         }], channelAccessToken);
     }
 
