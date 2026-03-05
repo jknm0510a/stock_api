@@ -161,14 +161,47 @@ async function handleEvent(event, c) {
     const isPrivateChat = event.source.type === 'user';
     const isSearchCommand = text.startsWith('/search ');
 
-    // Logic: In 1-on-1 chat, everything is a search query. In groups, require '/search '
-    if (!isPrivateChat && !isSearchCommand) {
+    // Logic: In 1-on-1 chat, everything is a search query unless it's a specific command.
+    // In groups, require '/search ' or the specific commands
+    const isWatchlistCommand = text.startsWith('/add ') || text === '/list' || text.startsWith('/remove ');
+    if (!isPrivateChat && !isSearchCommand && !isWatchlistCommand) {
         return; // Ignore regular messages in groups/rooms
     }
 
+    const userId = event.source.userId;
+    const extDB = env.DB;
+
+    // Handle /list command
+    if (text === '/list') {
+        const stmt = extDB.prepare('SELECT symbol, name FROM user_watchlists WHERE user_id = ? ORDER BY created_at DESC LIMIT 50');
+        const { results } = await stmt.bind(userId).all();
+
+        if (!results || results.length === 0) {
+            return await replyMessage(event.replyToken, [{
+                type: 'text',
+                text: '📝 目前追蹤清單為空。\n請使用「/add 股票代碼或名稱」來新增。'
+            }], channelAccessToken);
+        }
+
+        const listStr = results.map(r => `• ${r.symbol} ${r.name}`).join('\n');
+        return await replyMessage(event.replyToken, [{
+            type: 'text',
+            text: `📊 你的專屬追蹤清單：\n\n${listStr}\n\n(若要查詢走勢可直接輸入股票名稱)`
+        }], channelAccessToken);
+    }
+
     let queryTerm = text;
+    let isAdd = false;
+    let isRemove = false;
+
     if (isSearchCommand) {
         queryTerm = text.replace('/search ', '').trim();
+    } else if (text.startsWith('/add ')) {
+        queryTerm = text.replace('/add ', '').trim();
+        isAdd = true;
+    } else if (text.startsWith('/remove ')) {
+        queryTerm = text.replace('/remove ', '').trim();
+        isRemove = true;
     } else {
         queryTerm = text.trim();
     }
@@ -210,8 +243,29 @@ async function handleEvent(event, c) {
             }], channelAccessToken);
         }
 
-        // 1. Acknowledge user first using the reply token
         const displayName = `${realSymbol} ${realName}`;
+
+        // Handle addition
+        if (isAdd) {
+            const insertStmt = extDB.prepare('INSERT OR REPLACE INTO user_watchlists (user_id, symbol, name) VALUES (?, ?, ?)');
+            await insertStmt.bind(userId, realSymbol, realName).run();
+            return await replyMessage(event.replyToken, [{
+                type: 'text',
+                text: `✅ 已將 ${displayName} 加入追蹤清單`
+            }], channelAccessToken);
+        }
+
+        // Handle removal
+        if (isRemove) {
+            const deleteStmt = extDB.prepare('DELETE FROM user_watchlists WHERE user_id = ? AND symbol = ?');
+            await deleteStmt.bind(userId, realSymbol).run();
+            return await replyMessage(event.replyToken, [{
+                type: 'text',
+                text: `🗑️ 已將 ${displayName} 從追蹤清單移除`
+            }], channelAccessToken);
+        }
+
+        // 1. Acknowledge user first using the reply token
         await replyMessage(event.replyToken, [{
             type: 'text',
             text: `查詢 ${displayName} 盤中資訊中，請稍候...`
