@@ -2,6 +2,19 @@ import { Hono } from 'hono';
 import fugleService from '../services/fugleService';
 import chartService from '../services/chartService';
 
+// Helper for Background API Logging
+function logSystemAction(c, userId, actionType, symbol = null, name = null, apiEndpoint = null) {
+    try {
+        const stmt = c.env.DB.prepare(
+            'INSERT INTO system_logs (user_id, action_type, target_symbol, target_name, api_endpoint) VALUES (?, ?, ?, ?, ?)'
+        );
+        const promise = stmt.bind(userId, actionType, symbol, name, apiEndpoint).run().catch(console.error);
+        c.executionCtx.waitUntil(promise);
+    } catch (e) {
+        console.error('Failed to dispatch log event', e);
+    }
+}
+
 const app = new Hono();
 
 // Helper to verify LINE Webhook Signature using Web Crypto API (available in Cloudflare Workers)
@@ -183,6 +196,9 @@ async function handleEvent(event, c) {
             + `➖ /remove [股票]：移除追蹤清單\n`
             + `📋 /list：查看你的專屬清單\n\n`
             + `💡 小提示：大盤1分K支援成交量與即時漲跌色標喔！`;
+
+        // Log /help action
+        logSystemAction(c, userId, 'HELP');
 
         return await replyMessage(event.replyToken, [{
             type: 'text',
@@ -415,6 +431,9 @@ async function handleEvent(event, c) {
             }
         };
 
+        // Log /list action and API Usage
+        logSystemAction(c, userId, 'VIEW_LIST', null, null, 'getIntradayQuote (batch)');
+
         return await replyMessage(event.replyToken, [{
             type: 'flex',
             altText: '📋 你的專屬追蹤清單',
@@ -481,6 +500,9 @@ async function handleEvent(event, c) {
         if (isAdd) {
             const insertStmt = extDB.prepare('INSERT OR REPLACE INTO user_watchlists (user_id, symbol, name) VALUES (?, ?, ?)');
             await insertStmt.bind(userId, realSymbol, realName).run();
+
+            logSystemAction(c, userId, 'ADD_WATCHLIST', realSymbol, realName);
+
             return await replyMessage(event.replyToken, [{
                 type: 'text',
                 text: `✅ 已將 ${displayName} 加入追蹤清單`
@@ -491,6 +513,9 @@ async function handleEvent(event, c) {
         if (isRemove) {
             const deleteStmt = extDB.prepare('DELETE FROM user_watchlists WHERE user_id = ? AND symbol = ?');
             await deleteStmt.bind(userId, realSymbol).run();
+
+            logSystemAction(c, userId, 'REMOVE_WATCHLIST', realSymbol, realName);
+
             return await replyMessage(event.replyToken, [{
                 type: 'text',
                 text: `🗑️ 已將 ${displayName} 從追蹤清單移除`
@@ -508,6 +533,9 @@ async function handleEvent(event, c) {
             fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 1),
             fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
         ]);
+
+        // Log chart search action
+        logSystemAction(c, userId, 'SEARCH', realSymbol, realName, 'getIntradayCandles/Ticker');
 
         const candles = candlesRes?.data || [];
         const previousClose = tickerRes?.previousClose;
