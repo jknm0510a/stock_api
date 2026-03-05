@@ -44,6 +44,7 @@ class ChartService {
 
         const labels = sortedCandles.map(c => formatTimeUTC8(c.date));
         const data = sortedCandles.map(c => c.close);
+        const volumeData = sortedCandles.map(c => c.volume);
 
         // Keep track of valid data to compute symmetric Y scale correctly (excluding padding)
         const validDataValues = [...data];
@@ -69,14 +70,17 @@ class ChartService {
                 lastCandleMs += intervalMs;
                 labels.push(formatTimeUTC8(new Date(lastCandleMs).toISOString()));
                 data.push(null);
+                volumeData.push(null);
             }
             if (labels[labels.length - 1] !== '13:30' && labels.length < 400) {
                 labels.push('13:30');
                 data.push(null);
+                volumeData.push(null);
             }
             if (labels[0] !== '09:00') {
                 labels.unshift('09:00');
                 data.unshift(null);
+                volumeData.unshift(null);
             }
         }
 
@@ -255,7 +259,24 @@ class ChartService {
                             }
                             : undefined
                     },
-                    tension: 0.1
+                    tension: 0.1,
+                    yAxisID: 'y'
+                },
+                {
+                    type: 'bar',
+                    label: 'Volume',
+                    data: volumeData,
+                    backgroundColor: function (context) {
+                        var currentIndex = context.dataIndex;
+                        if (currentIndex === 0) return 'rgba(255, 99, 132, 0.5)'; // default up memory
+                        var p0 = context.chart.data.datasets[0].data[currentIndex - 1];
+                        var p1 = context.chart.data.datasets[0].data[currentIndex];
+                        if (p1 >= p0) return 'rgba(255, 99, 132, 0.7)';
+                        return 'rgba(75, 192, 192, 0.7)';
+                    },
+                    yAxisID: 'y2',
+                    barPercentage: 1.0,
+                    categoryPercentage: 1.0
                 }]
             },
             options: {
@@ -296,6 +317,14 @@ class ChartService {
                             } : undefined,
                             font: { size: 30 }
                         }
+                    },
+                    y2: {
+                        display: false, // Don't show numeric scale for volume
+                        position: 'right',
+                        min: 0,
+                        // Make max huge so volume bars only take up bottom 20%
+                        max: Math.max(...volumeData.filter(v => v !== null)) * 5,
+                        grid: { drawOnChartArea: false }
                     }
                 },
                 plugins: {
