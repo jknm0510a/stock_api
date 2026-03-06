@@ -396,7 +396,7 @@ class ChartService {
 
     /**
      * Generate a K-Line chart payload for QuickChart v3.
-     * Manual Category scale with vertical line annotations for monthly labels.
+     * Mixed-type chart (type: 'line') to allow Candlestick + Line (MA) datasets.
      */
     generateKLineChart(candlesArray, symbol, name = '') {
         if (!candlesArray || candlesArray.length === 0) return null;
@@ -406,41 +406,58 @@ class ChartService {
             .filter(c => c && c.date)
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // 2. Take last 60
-        const render = sorted.slice(-60);
+        // 2. Calculate MAs on the FULL sorted array
+        const calculateMA = (data, period) => {
+            return data.map((_, idx) => {
+                if (idx < period - 1) return null;
+                const slice = data.slice(idx - period + 1, idx + 1);
+                const sum = slice.reduce((acc, curr) => acc + Number(curr.close), 0);
+                return parseFloat((sum / period).toFixed(2));
+            });
+        };
 
-        // 3. Prepare Labels, Data, and Annotations (Vertical Lines)
+        const ma5Full = calculateMA(sorted, 5);
+        const ma10Full = calculateMA(sorted, 10);
+        const ma20Full = calculateMA(sorted, 20);
+        const ma60Full = calculateMA(sorted, 60);
+
+        // 3. Take last 60 for rendering
+        const startIndex = Math.max(0, sorted.length - 60);
+        const render = sorted.slice(startIndex);
+
+        // 4. Prepare Labels, Data, and Annotations
         const labels = [];
         const ohlc = [];
+        const ma5Data = [];
+        const ma10Data = [];
+        const ma20Data = [];
+        const ma60Data = [];
         const annotations = {};
 
         render.forEach((c, i) => {
+            const globalIdx = startIndex + i;
             const d = new Date(c.date);
             const prevD = i > 0 ? new Date(render[i - 1].date) : null;
 
-            // Only show label if first candle or month changed
+            // Labels & Vertical Lines
             if (i === 0 || (prevD && d.getMonth() !== prevD.getMonth())) {
                 const yy = String(d.getFullYear()).slice(-2);
                 const mm = String(d.getMonth() + 1).padStart(2, '0');
                 const dd = String(d.getDate()).padStart(2, '0');
-                const labelText = `${yy}/${mm}/${dd}`;
-                labels.push(labelText);
+                labels.push(`${yy}/${mm}/${dd}`);
 
-                // Add vertical line annotation for labeled dates
                 annotations[`line_${i}`] = {
                     type: 'line',
                     xMin: i,
                     xMax: i,
                     borderColor: 'rgba(0, 0, 0, 0.15)',
-                    borderWidth: 2,
-                    label: {
-                        display: false
-                    }
+                    borderWidth: 2
                 };
             } else {
                 labels.push('');
             }
 
+            // K-line data
             ohlc.push({
                 x: i,
                 o: Number(c.open),
@@ -448,37 +465,91 @@ class ChartService {
                 l: Number(c.low),
                 c: Number(c.close)
             });
+
+            // MA data (as objects for perfect alignment)
+            if (ma5Full[globalIdx] !== null) ma5Data.push({ x: i, y: ma5Full[globalIdx] });
+            if (ma10Full[globalIdx] !== null) ma10Data.push({ x: i, y: ma10Full[globalIdx] });
+            if (ma20Full[globalIdx] !== null) ma20Data.push({ x: i, y: ma20Full[globalIdx] });
+            if (ma60Full[globalIdx] !== null) ma60Data.push({ x: i, y: ma60Full[globalIdx] });
         });
 
-        // 4. Calculate Y bounds manually
+        // 5. Calculate Y bounds
         const allPrices = render.flatMap(c => [Number(c.high), Number(c.low)]);
-        const maxP = Math.max(...allPrices);
-        const minP = Math.min(...allPrices);
+        const allMAs = [
+            ...ma5Data.map(d => d.y),
+            ...ma10Data.map(d => d.y),
+            ...ma20Data.map(d => d.y),
+            ...ma60Data.map(d => d.y)
+        ];
+        const combined = [...allPrices, ...allMAs];
+
+        const maxP = Math.max(...combined);
+        const minP = Math.min(...combined);
         const padding = (maxP - minP) * 0.1 || 1;
         const yMax = parseFloat((maxP + padding).toFixed(2));
         const yMin = parseFloat((Math.max(0, minP - padding)).toFixed(2));
 
         const last = render[render.length - 1];
 
-        // 5. Construct ChartConfig
+        // 6. Construct ChartConfig (Mixed-type)
         const chartConfig = {
-            type: 'candlestick',
+            type: 'line', // Use 'line' globally to allow mixed datasets
             data: {
                 labels: labels,
-                datasets: [{
-                    label: symbol,
-                    data: ohlc,
-                    color: {
-                        up: '#ff3333',
-                        down: '#33cc33'
+                datasets: [
+                    {
+                        type: 'candlestick',
+                        label: symbol,
+                        data: ohlc,
+                        color: { up: '#ff3333', down: '#33cc33' },
+                        borderColor: '#333333'
                     },
-                    borderColor: '#333333'
-                }]
+                    {
+                        type: 'line',
+                        label: '5MA',
+                        data: ma5Data,
+                        borderColor: '#E1BEE7',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '10MA',
+                        data: ma10Data,
+                        borderColor: '#FFD54F',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '20MA',
+                        data: ma20Data,
+                        borderColor: '#4FC3F7',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false
+                    },
+                    {
+                        type: 'line',
+                        label: '60MA',
+                        data: ma60Data,
+                        borderColor: '#81C784',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false
+                    }
+                ]
             },
             options: {
                 plugins: {
                     chartJsFamilySet: ['financial'],
-                    legend: { display: false },
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { font: { size: 20 } }
+                    },
                     title: {
                         display: true,
                         text: name ? `${symbol} ${name} (日K線)` : `${symbol} (日K線)`,
@@ -489,20 +560,13 @@ class ChartService {
                         text: `最後收盤價: ${last.close} | 筆數: ${render.length}`,
                         font: { size: 30 }
                     },
-                    // Draw vertical lines on labeled dates
-                    annotation: {
-                        annotations: annotations
-                    }
+                    annotation: { annotations: annotations }
                 },
                 scales: {
                     x: {
                         type: 'category',
-                        ticks: {
-                            autoSkip: false,
-                            font: { size: 24, weight: 'bold' },
-                            maxRotation: 0
-                        },
-                        grid: { display: false } // We use annotations for grid lines
+                        ticks: { autoSkip: false, font: { size: 24, weight: 'bold' }, maxRotation: 0 },
+                        grid: { display: false }
                     },
                     y: {
                         min: yMin,
@@ -513,7 +577,6 @@ class ChartService {
             }
         };
 
-        // 6. Build final payload
         return JSON.stringify({
             version: '3',
             chartJsFamilySet: 'financial',
