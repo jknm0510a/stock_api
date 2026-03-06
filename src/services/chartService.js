@@ -393,6 +393,137 @@ class ChartService {
 
         return JSON.stringify(quickChartPayload);
     }
+
+    /**
+     * Generate a K-Line chart payload for QuickChart v3.
+     * Manual Category scale with vertical line annotations for monthly labels.
+     */
+    generateKLineChart(candlesArray, symbol, name = '') {
+        if (!candlesArray || candlesArray.length === 0) return null;
+
+        // 1. Sort ascending
+        let sorted = [...candlesArray]
+            .filter(c => c && c.date)
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // 2. Take last 60
+        const render = sorted.slice(-60);
+
+        // 3. Prepare Labels, Data, and Annotations (Vertical Lines)
+        const labels = [];
+        const ohlc = [];
+        const annotations = {};
+
+        render.forEach((c, i) => {
+            const d = new Date(c.date);
+            const prevD = i > 0 ? new Date(render[i - 1].date) : null;
+
+            // Only show label if first candle or month changed
+            if (i === 0 || (prevD && d.getMonth() !== prevD.getMonth())) {
+                const yy = String(d.getFullYear()).slice(-2);
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                const labelText = `${yy}/${mm}/${dd}`;
+                labels.push(labelText);
+
+                // Add vertical line annotation for labeled dates
+                annotations[`line_${i}`] = {
+                    type: 'line',
+                    xMin: i,
+                    xMax: i,
+                    borderColor: 'rgba(0, 0, 0, 0.15)',
+                    borderWidth: 2,
+                    label: {
+                        display: false
+                    }
+                };
+            } else {
+                labels.push('');
+            }
+
+            ohlc.push({
+                x: i,
+                o: Number(c.open),
+                h: Number(c.high),
+                l: Number(c.low),
+                c: Number(c.close)
+            });
+        });
+
+        // 4. Calculate Y bounds manually
+        const allPrices = render.flatMap(c => [Number(c.high), Number(c.low)]);
+        const maxP = Math.max(...allPrices);
+        const minP = Math.min(...allPrices);
+        const padding = (maxP - minP) * 0.1 || 1;
+        const yMax = parseFloat((maxP + padding).toFixed(2));
+        const yMin = parseFloat((Math.max(0, minP - padding)).toFixed(2));
+
+        const last = render[render.length - 1];
+
+        // 5. Construct ChartConfig
+        const chartConfig = {
+            type: 'candlestick',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: symbol,
+                    data: ohlc,
+                    color: {
+                        up: '#ff3333',
+                        down: '#33cc33'
+                    },
+                    borderColor: '#333333'
+                }]
+            },
+            options: {
+                plugins: {
+                    chartJsFamilySet: ['financial'],
+                    legend: { display: false },
+                    title: {
+                        display: true,
+                        text: name ? `${symbol} ${name} (日K線)` : `${symbol} (日K線)`,
+                        font: { size: 60, weight: 'bold' }
+                    },
+                    subtitle: {
+                        display: true,
+                        text: `最後收盤價: ${last.close} | 筆數: ${render.length}`,
+                        font: { size: 30 }
+                    },
+                    // Draw vertical lines on labeled dates
+                    annotation: {
+                        annotations: annotations
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'category',
+                        ticks: {
+                            autoSkip: false,
+                            font: { size: 24, weight: 'bold' },
+                            maxRotation: 0
+                        },
+                        grid: { display: false } // We use annotations for grid lines
+                    },
+                    y: {
+                        min: yMin,
+                        max: yMax,
+                        ticks: { font: { size: 24, weight: 'bold' } }
+                    }
+                }
+            }
+        };
+
+        // 6. Build final payload
+        return JSON.stringify({
+            version: '3',
+            chartJsFamilySet: 'financial',
+            backgroundColor: 'white',
+            chart: chartConfig,
+            width: 1400,
+            height: 1000,
+            devicePixelRatio: 2.0
+        });
+    }
 }
 
 module.exports = new ChartService();

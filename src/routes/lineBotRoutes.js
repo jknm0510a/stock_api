@@ -161,6 +161,95 @@ app.get('/image/:id', async (c) => {
     }
 });
 
+// Quick test: can workers POST candlestick to quickchart at all?
+app.get('/kline-test', async (c) => {
+    const testPayload = {
+        version: '3',
+        backgroundColor: 'white',
+        chart: {
+            type: 'candlestick',
+            data: {
+                labels: ['2025-01-01', '2025-01-02', '2025-01-03'],
+                datasets: [{
+                    label: 'Test',
+                    data: [
+                        { x: '2025-01-01', o: 100, h: 110, l: 90, c: 105 },
+                        { x: '2025-01-02', o: 105, h: 115, l: 95, c: 100 },
+                        { x: '2025-01-03', o: 100, h: 120, l: 95, c: 115 }
+                    ]
+                }]
+            }
+        },
+        width: 400,
+        height: 300,
+        format: 'png'
+    };
+
+    const res = await fetch('https://quickchart.io/chart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testPayload)
+    });
+
+    const errText = res.ok ? `OK size=${res.headers.get('content-length')}` : await res.text();
+    return c.text(`QC Status: ${res.status} - ${errText}`);
+});
+
+// Proxy route for K-Line (Daily Candles + MA)
+app.get('/kline/:id', async (c) => {
+    const symbolWithExt = c.req.param('id');
+    const symbol = symbolWithExt.replace('.png', '');
+    const env = c.env;
+    const name = c.req.query('name') || symbol;
+
+    try {
+        // Calculate date range: from exactly 1 year ago to today
+        const today = new Date();
+        // Taiwan is UTC+8, doing basic string formatting
+        const toDateStr = today.toISOString().split('T')[0];
+        const fromDate = new Date();
+        fromDate.setDate(today.getDate() - 364); // 364 days = strictly less than 1 year (Fugle rejects exact 365)
+        const fromDateStr = fromDate.toISOString().split('T')[0];
+
+        // Fetch historical daily candles (explicitly request asc to simplify logic)
+        const candlesRes = await fugleService.getHistoricalCandles(symbol, env.FUGLE_API_KEY, fromDateStr, toDateStr, 'asc');
+        const candles = candlesRes?.data || [];
+
+        // Build Payload (string, matching intraday chart pattern)
+        const chartPayloadStr = chartService.generateKLineChart(candles, symbol, name);
+        if (!chartPayloadStr) {
+            return c.text('Not enough data to generate K-Line', 400);
+        }
+
+        // DEBUG: return raw payload for inspection
+        if (c.req.query('debug') === '1') {
+            return c.json(JSON.parse(chartPayloadStr));
+        }
+
+        // Post to QuickChart
+        const response = await fetch('https://quickchart.io/chart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: chartPayloadStr
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error('QC Error:', errText);
+            return c.text(`Quickchart Error: ${errText}`, response.status);
+        }
+
+        const headers = new Headers();
+        headers.set('Content-Type', 'image/png');
+        headers.set('Cache-Control', 'public, max-age=3600'); // Cache K-lines for 1 hour since they update slowly
+
+        return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+        console.error('K-Line Proxy Error:', error);
+        return c.text('Internal K-Line Proxy Error', 500);
+    }
+});
+
 async function handleEvent(event, c) {
     const env = c.env;
     const reqUrl = c.req.url;
@@ -173,11 +262,12 @@ async function handleEvent(event, c) {
 
     const isPrivateChat = event.source.type === 'user';
     const isSearchCommand = text.startsWith('/search ');
+    const isKlineCommand = text.startsWith('/kline ');
 
     // Logic: In 1-on-1 chat, everything is a search query unless it's a specific command.
     // In groups, require '/search ' or the specific commands
     const isWatchlistCommand = text.startsWith('/add ') || text === '/list' || text.startsWith('/remove ') || text === '/help';
-    if (!isPrivateChat && !isSearchCommand && !isWatchlistCommand) {
+    if (!isPrivateChat && !isSearchCommand && !isKlineCommand && !isWatchlistCommand) {
         return; // Ignore regular messages in groups/rooms
     }
 
@@ -444,9 +534,13 @@ async function handleEvent(event, c) {
     let queryTerm = text;
     let isAdd = false;
     let isRemove = false;
+    let isKline = false;
 
     if (isSearchCommand) {
         queryTerm = text.replace('/search ', '').trim();
+    } else if (isKlineCommand) {
+        queryTerm = text.replace('/kline ', '').trim();
+        isKline = true;
     } else if (text.startsWith('/add ')) {
         queryTerm = text.replace('/add ', '').trim();
         isAdd = true;
@@ -523,11 +617,69 @@ async function handleEvent(event, c) {
         }
 
         // 1. Acknowledge user first using the reply token
+        const ackWord = isKline ? '日K線' : '盤中資訊';
         await replyMessage(event.replyToken, [{
             type: 'text',
-            text: `查詢 ${displayName} 盤中資訊中，請稍候...`
+            text: `查詢 ${displayName} ${ackWord}中，請稍候...`
         }], channelAccessToken);
 
+        // -- BRANCH FOR KLINE --
+        if (isKline) {
+            logSystemAction(c, userId, 'KLINE', realSymbol, realName, 'getHistoricalCandles');
+
+            const urlObj = new URL(reqUrl);
+            const ts = Date.now();
+            const imageUrl = `${urlObj.origin}/webhook/kline/${realSymbol}.png?name=${encodeURIComponent(realName)}&t=${ts}`;
+            const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}/technical-analysis`;
+
+            return await pushMessage(event.source.userId, [{
+                type: 'flex',
+                altText: `查閱 ${displayName} 日K線圖`,
+                contents: {
+                    type: 'bubble',
+                    size: 'giga',
+                    body: {
+                        type: 'box',
+                        layout: 'vertical',
+                        paddingAll: '0px',
+                        action: {
+                            type: 'uri',
+                            label: '開啟 Yahoo 股市',
+                            uri: yahooFinanceUrl
+                        },
+                        contents: [
+                            {
+                                type: 'image',
+                                url: imageUrl,
+                                size: 'full',
+                                aspectRatio: '1.4:1',
+                                aspectMode: 'cover'
+                            }
+                        ]
+                    },
+                    footer: {
+                        type: 'box',
+                        layout: 'horizontal',
+                        spacing: 'sm',
+                        contents: [
+                            {
+                                type: 'button',
+                                style: 'primary',
+                                height: 'sm',
+                                color: '#0369a1',
+                                action: {
+                                    type: 'message',
+                                    label: '◀ 返回盤中走勢',
+                                    text: `/search ${realSymbol}`
+                                }
+                            }
+                        ]
+                    }
+                }
+            }], channelAccessToken);
+        }
+
+        // -- REGULAR INTRADAY SEARCH --
         // 2. Fetch data from Fugle (timeframe=1 as requested by user)
         const [candlesRes, tickerRes] = await Promise.all([
             fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 1),
@@ -578,6 +730,23 @@ async function handleEvent(event, c) {
                             size: 'full',
                             aspectRatio: '1.4:1',
                             aspectMode: 'cover'
+                        }
+                    ]
+                },
+                footer: {
+                    type: 'box',
+                    layout: 'horizontal',
+                    spacing: 'sm',
+                    contents: [
+                        {
+                            type: 'button',
+                            style: 'secondary',
+                            height: 'sm',
+                            action: {
+                                type: 'message',
+                                label: '📊 查看日 K 線 (含均線)',
+                                text: `/kline ${realSymbol}`
+                            }
                         }
                     ]
                 }

@@ -208,6 +208,41 @@ class FugleService {
             return []; // Return empty array so the cron job doesn't completely crash
         }
     }
+    /**
+     * Fetch historical daily candlestick data for K-Line charts.
+     * https://developer.fugle.tw/docs/data/core/historical/candles
+     * @param {string} symbol
+     * @param {string} apiKey
+     * @param {string} from YYYY-MM-DD
+     * @param {string} to YYYY-MM-DD
+     */
+    async getHistoricalCandles(symbol, apiKey, from, to, sort = 'asc') {
+        if (!apiKey) {
+            throw new Error('API Key missing');
+        }
+
+        const url = `${this.baseUrl}/historical/candles/${symbol}?from=${from}&to=${to}&timeframe=D&sort=${sort}`;
+
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-API-KEY': apiKey
+                }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fugle API error: ${response.status} ${errorText}`);
+            }
+
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error(`Error fetching historical candles for ${symbol}:`, error);
+            throw error;
+        }
+    }
 }
 
 export default new FugleService();
