@@ -428,6 +428,8 @@ class ChartService {
         // 4. Prepare Labels, Data, and Annotations
         const labels = ['']; // Start with a dummy label to create left offset
         const ohlc = [];
+        const volumeData = [];
+        const volumeColors = [];
         const ma5Data = [];
         const ma10Data = [];
         const ma20Data = [];
@@ -459,13 +461,19 @@ class ChartService {
             }
 
             // K-line data
+            const open = Number(c.open);
+            const close = Number(c.close);
             ohlc.push({
                 x: displayIdx,
-                o: Number(c.open),
+                o: open,
                 h: Number(c.high),
                 l: Number(c.low),
-                c: Number(c.close)
+                c: close
             });
+
+            // Volume data
+            volumeData.push({ x: displayIdx, y: Number(c.volume) });
+            volumeColors.push(close >= open ? 'rgba(255, 51, 51, 0.7)' : 'rgba(51, 204, 51, 0.7)');
 
             // MA data
             if (ma5Full[globalIdx] !== null) ma5Data.push({ x: displayIdx, y: ma5Full[globalIdx] });
@@ -479,10 +487,12 @@ class ChartService {
         let lowIdx = 0;
         let absoluteHigh = -Infinity;
         let absoluteLow = Infinity;
+        let maxVolume = 0;
 
         render.forEach((c, i) => {
             const h = Number(c.high);
             const l = Number(c.low);
+            const v = Number(c.volume);
             if (h > absoluteHigh) {
                 absoluteHigh = h;
                 highIdx = i + 1;
@@ -491,6 +501,7 @@ class ChartService {
                 absoluteLow = l;
                 lowIdx = i + 1;
             }
+            if (v > maxVolume) maxVolume = v;
         });
 
         // Calculate xAdjust to avoid clipping at right edge
@@ -508,7 +519,7 @@ class ChartService {
             backgroundColor: 'rgba(255, 51, 51, 0.9)',
             content: `${absoluteHigh}`,
             position: 'top',
-            yAdjust: -25, // Increased distance from candle
+            yAdjust: -25,
             xAdjust: highXAdj,
             font: { size: 24, weight: 'bold' },
             color: 'white',
@@ -523,7 +534,7 @@ class ChartService {
             backgroundColor: 'rgba(51, 204, 51, 0.9)',
             content: `${absoluteLow}`,
             position: 'bottom',
-            yAdjust: 25, // Increased distance from candle
+            yAdjust: 25,
             font: { size: 24, weight: 'bold' },
             color: 'white',
             padding: 6,
@@ -541,7 +552,7 @@ class ChartService {
         const combined = [...allPrices, ...allMAs];
         const maxP = Math.max(...combined);
         const minP = Math.min(...combined);
-        const padding = (maxP - minP) * 0.2 || 1; // Increased Y padding for label clearance
+        const padding = (maxP - minP) * 0.2 || 1;
         const yMax = parseFloat((maxP + padding).toFixed(2));
         const yMin = parseFloat((Math.max(0, minP - padding)).toFixed(2));
 
@@ -558,7 +569,17 @@ class ChartService {
                         label: symbol,
                         data: ohlc,
                         color: { up: '#ff3333', down: '#33cc33' },
-                        borderColor: '#333333'
+                        borderColor: '#333333',
+                        yAxisID: 'y'
+                    },
+                    {
+                        type: 'bar',
+                        label: '成交量',
+                        data: volumeData,
+                        backgroundColor: volumeColors,
+                        yAxisID: 'y2',
+                        barPercentage: 0.8,
+                        categoryPercentage: 0.8
                     },
                     {
                         type: 'line',
@@ -567,7 +588,8 @@ class ChartService {
                         borderColor: '#E1BEE7',
                         borderWidth: 2,
                         pointRadius: 0,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
                     },
                     {
                         type: 'line',
@@ -576,7 +598,8 @@ class ChartService {
                         borderColor: '#FFD54F',
                         borderWidth: 2,
                         pointRadius: 0,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
                     },
                     {
                         type: 'line',
@@ -585,7 +608,8 @@ class ChartService {
                         borderColor: '#4FC3F7',
                         borderWidth: 2,
                         pointRadius: 0,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
                     },
                     {
                         type: 'line',
@@ -594,7 +618,8 @@ class ChartService {
                         borderColor: '#81C784',
                         borderWidth: 2,
                         pointRadius: 0,
-                        fill: false
+                        fill: false,
+                        yAxisID: 'y'
                     }
                 ]
             },
@@ -628,9 +653,17 @@ class ChartService {
                         grid: { display: false }
                     },
                     y: {
+                        position: 'left',
                         min: yMin,
                         max: yMax,
                         ticks: { font: { size: 24, weight: 'bold' } }
+                    },
+                    y2: {
+                        position: 'right',
+                        display: false,
+                        min: 0,
+                        max: maxVolume * 4, // Keeps volume bars in the bottom 25%
+                        grid: { display: false }
                     }
                 }
             }
