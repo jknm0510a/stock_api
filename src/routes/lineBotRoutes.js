@@ -725,11 +725,12 @@ async function handleEvent(event, c) {
                     contents: [
                         {
                             type: 'button',
-                            style: 'secondary',
+                            style: 'primary',
                             height: 'sm',
+                            color: '#0369a1',
                             action: {
                                 type: 'message',
-                                label: '📊 查看日 K 線 (含均線)',
+                                label: '📊 查看日 K 線圖',
                                 text: `/kline ${realSymbol}`
                             }
                         }
