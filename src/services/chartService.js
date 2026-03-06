@@ -426,7 +426,7 @@ class ChartService {
         const render = sorted.slice(startIndex);
 
         // 4. Prepare Labels, Data, and Annotations
-        const labels = [];
+        const labels = ['']; // Start with a dummy label to create left offset
         const ohlc = [];
         const ma5Data = [];
         const ma10Data = [];
@@ -436,6 +436,7 @@ class ChartService {
 
         render.forEach((c, i) => {
             const globalIdx = startIndex + i;
+            const displayIdx = i + 1; // Shifted by 1
             const d = new Date(c.date);
             const prevD = i > 0 ? new Date(render[i - 1].date) : null;
 
@@ -448,8 +449,8 @@ class ChartService {
 
                 annotations[`line_${i}`] = {
                     type: 'line',
-                    xMin: i,
-                    xMax: i,
+                    xMin: displayIdx,
+                    xMax: displayIdx,
                     borderColor: 'rgba(0, 0, 0, 0.15)',
                     borderWidth: 2
                 };
@@ -459,21 +460,77 @@ class ChartService {
 
             // K-line data
             ohlc.push({
-                x: i,
+                x: displayIdx,
                 o: Number(c.open),
                 h: Number(c.high),
                 l: Number(c.low),
                 c: Number(c.close)
             });
 
-            // MA data (as objects for perfect alignment)
-            if (ma5Full[globalIdx] !== null) ma5Data.push({ x: i, y: ma5Full[globalIdx] });
-            if (ma10Full[globalIdx] !== null) ma10Data.push({ x: i, y: ma10Full[globalIdx] });
-            if (ma20Full[globalIdx] !== null) ma20Data.push({ x: i, y: ma20Full[globalIdx] });
-            if (ma60Full[globalIdx] !== null) ma60Data.push({ x: i, y: ma60Full[globalIdx] });
+            // MA data
+            if (ma5Full[globalIdx] !== null) ma5Data.push({ x: displayIdx, y: ma5Full[globalIdx] });
+            if (ma10Full[globalIdx] !== null) ma10Data.push({ x: displayIdx, y: ma10Full[globalIdx] });
+            if (ma20Full[globalIdx] !== null) ma20Data.push({ x: displayIdx, y: ma20Full[globalIdx] });
+            if (ma60Full[globalIdx] !== null) ma60Data.push({ x: displayIdx, y: ma60Full[globalIdx] });
         });
 
-        // 5. Calculate Y bounds
+        // 5. Find absolute High and Low for labels
+        let highIdx = 0;
+        let lowIdx = 0;
+        let absoluteHigh = -Infinity;
+        let absoluteLow = Infinity;
+
+        render.forEach((c, i) => {
+            const h = Number(c.high);
+            const l = Number(c.low);
+            if (h > absoluteHigh) {
+                absoluteHigh = h;
+                highIdx = i + 1;
+            }
+            if (l < absoluteLow) {
+                absoluteLow = l;
+                lowIdx = i + 1;
+            }
+        });
+
+        // Calculate xAdjust to avoid clipping at right edge
+        let highXAdj = 0;
+        if (highIdx > 55) highXAdj = -50;
+
+        let lowXAdj = 0;
+        if (lowIdx > 55) lowXAdj = -50;
+
+        // Add High/Low annotations
+        annotations['label_high'] = {
+            type: 'label',
+            xValue: highIdx,
+            yValue: absoluteHigh,
+            backgroundColor: 'rgba(255, 51, 51, 0.9)',
+            content: `${absoluteHigh}`,
+            position: 'top',
+            yAdjust: -25, // Increased distance from candle
+            xAdjust: highXAdj,
+            font: { size: 24, weight: 'bold' },
+            color: 'white',
+            padding: 6,
+            borderRadius: 4
+        };
+
+        annotations['label_low'] = {
+            type: 'label',
+            xValue: lowIdx,
+            yValue: absoluteLow,
+            backgroundColor: 'rgba(51, 204, 51, 0.9)',
+            content: `${absoluteLow}`,
+            position: 'bottom',
+            yAdjust: 25, // Increased distance from candle
+            font: { size: 24, weight: 'bold' },
+            color: 'white',
+            padding: 6,
+            borderRadius: 4
+        };
+
+        // 6. Calculate Y bounds
         const allPrices = render.flatMap(c => [Number(c.high), Number(c.low)]);
         const allMAs = [
             ...ma5Data.map(d => d.y),
@@ -482,18 +539,17 @@ class ChartService {
             ...ma60Data.map(d => d.y)
         ];
         const combined = [...allPrices, ...allMAs];
-
         const maxP = Math.max(...combined);
         const minP = Math.min(...combined);
-        const padding = (maxP - minP) * 0.1 || 1;
+        const padding = (maxP - minP) * 0.2 || 1; // Increased Y padding for label clearance
         const yMax = parseFloat((maxP + padding).toFixed(2));
         const yMin = parseFloat((Math.max(0, minP - padding)).toFixed(2));
 
         const last = render[render.length - 1];
 
-        // 6. Construct ChartConfig (Mixed-type)
+        // 7. Construct ChartConfig (Mixed-type)
         const chartConfig = {
-            type: 'line', // Use 'line' globally to allow mixed datasets
+            type: 'line',
             data: {
                 labels: labels,
                 datasets: [
@@ -543,6 +599,9 @@ class ChartService {
                 ]
             },
             options: {
+                layout: {
+                    padding: { left: 0, right: 10, bottom: 20, top: 20 }
+                },
                 plugins: {
                     chartJsFamilySet: ['financial'],
                     legend: {

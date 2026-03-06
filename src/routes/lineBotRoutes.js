@@ -616,13 +616,6 @@ async function handleEvent(event, c) {
             }], channelAccessToken);
         }
 
-        // 1. Acknowledge user first using the reply token
-        const ackWord = isKline ? '日K線' : '盤中資訊';
-        await replyMessage(event.replyToken, [{
-            type: 'text',
-            text: `查詢 ${displayName} ${ackWord}中，請稍候...`
-        }], channelAccessToken);
-
         // -- BRANCH FOR KLINE --
         if (isKline) {
             logSystemAction(c, userId, 'KLINE', realSymbol, realName, 'getHistoricalCandles');
@@ -632,7 +625,7 @@ async function handleEvent(event, c) {
             const imageUrl = `${urlObj.origin}/webhook/kline/${realSymbol}.png?name=${encodeURIComponent(realName)}&t=${ts}`;
             const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}/technical-analysis`;
 
-            return await pushMessage(event.source.userId, [{
+            return await replyMessage(event.replyToken, [{
                 type: 'flex',
                 altText: `查閱 ${displayName} 日K線圖`,
                 contents: {
@@ -692,23 +685,15 @@ async function handleEvent(event, c) {
         const candles = candlesRes?.data || [];
         const previousClose = tickerRes?.previousClose;
 
-        if (candles.length === 0) {
-            // Send via push since replyToken is already used
-            return await pushMessage(event.source.userId, [{
-                type: 'text',
-                text: `查無 ${displayName} 的當日交易紀錄`
-            }], channelAccessToken);
-        }
-
         // 3. Construct proxy URL ensuring it's HTTPS and native .png
         // The image GET handler will do ALL the heavy lifting dynamically! 
         const urlObj = new URL(reqUrl);
         const ts = Date.now();
         const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}&t=${ts}`;
 
-        // 5. Send Image via Push Message (using Flex Message)
+        // 5. Send Image via Reply Message (Avoid Push Quota issues)
         const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}`;
-        return await pushMessage(event.source.userId, [{
+        return await replyMessage(event.replyToken, [{
             type: 'flex',
             altText: `查閱 ${displayName} 最新走勢圖`,
             contents: {
