@@ -472,8 +472,8 @@ class ChartService {
             });
 
             // Volume data
-            volumeData.push({ x: displayIdx, y: Number(c.volume) });
-            volumeColors.push(close >= open ? 'rgba(255, 51, 51, 0.7)' : 'rgba(51, 204, 51, 0.7)');
+            volumeData.push({ x: displayIdx, y: parseFloat((Number(c.volume) / 1000).toFixed(2)) });
+            volumeColors.push(close >= open ? 'rgba(255, 99, 132, 0.7)' : 'rgba(75, 192, 192, 0.7)');
 
             // MA data
             if (ma5Full[globalIdx] !== null) ma5Data.push({ x: displayIdx, y: ma5Full[globalIdx] });
@@ -492,7 +492,7 @@ class ChartService {
         render.forEach((c, i) => {
             const h = Number(c.high);
             const l = Number(c.low);
-            const v = Number(c.volume);
+            const v = Number(c.volume) / 1000;
             if (h > absoluteHigh) {
                 absoluteHigh = h;
                 highIdx = i + 1;
@@ -516,7 +516,7 @@ class ChartService {
             type: 'label',
             xValue: highIdx,
             yValue: absoluteHigh,
-            backgroundColor: 'rgba(255, 51, 51, 0.9)',
+            backgroundColor: 'rgba(255, 99, 132, 0.9)',
             content: `${absoluteHigh}`,
             position: 'top',
             yAdjust: -25,
@@ -531,7 +531,7 @@ class ChartService {
             type: 'label',
             xValue: lowIdx,
             yValue: absoluteLow,
-            backgroundColor: 'rgba(51, 204, 51, 0.9)',
+            backgroundColor: 'rgba(75, 192, 192, 0.9)',
             content: `${absoluteLow}`,
             position: 'bottom',
             yAdjust: 25,
@@ -552,13 +552,24 @@ class ChartService {
         const combined = [...allPrices, ...allMAs];
         const maxP = Math.max(...combined);
         const minP = Math.min(...combined);
-        const padding = (maxP - minP) * 0.2 || 1;
+        // 7. Calculate Price Movement for Subtitle
+        const last = render[render.length - 1];
+        const prevLast = render.length > 1 ? render[render.length - 2] : last;
+        const diffVal = Number((last.close - prevLast.close).toFixed(2));
+        const pctVal = Number(((diffVal / prevLast.close) * 100).toFixed(2));
+
+        const sign = diffVal > 0 ? '+' : '';
+        const moveColor = diffVal > 0 ? 'rgb(255, 99, 132)' : (diffVal < 0 ? 'rgb(75, 192, 192)' : '#333333');
+
+        const padding = (maxP - minP) * 0.35 || 1;
         const yMax = parseFloat((maxP + padding).toFixed(2));
         const yMin = parseFloat((Math.max(0, minP - padding)).toFixed(2));
 
-        const last = render[render.length - 1];
+        // 8. Build subtitle text: 收盤價 ▲ +差價 (+漲跌幅%)
+        const arrow = diffVal > 0 ? '▲' : (diffVal < 0 ? '▼' : '—');
+        const subtitleText = `${last.close}  ${arrow}  ${sign}${Math.abs(diffVal)} (${sign}${pctVal}%)`;
 
-        // 7. Construct ChartConfig (Mixed-type)
+        // 9. Construct ChartConfig (Mixed-type)
         const chartConfig = {
             type: 'line',
             data: {
@@ -566,9 +577,9 @@ class ChartService {
                 datasets: [
                     {
                         type: 'candlestick',
-                        label: symbol,
+                        label: 'K線',
                         data: ohlc,
-                        color: { up: '#ff3333', down: '#33cc33' },
+                        color: { up: 'rgb(255, 99, 132)', down: 'rgb(75, 192, 192)' },
                         borderColor: '#333333',
                         yAxisID: 'y'
                     },
@@ -625,24 +636,28 @@ class ChartService {
             },
             options: {
                 layout: {
-                    padding: { left: 0, right: 10, bottom: 20, top: 20 }
+                    padding: { left: 0, right: 10, bottom: 20, top: 10 }
                 },
                 plugins: {
-                    chartJsFamilySet: ['financial'],
                     legend: {
                         display: true,
                         position: 'top',
-                        labels: { font: { size: 20 } }
+                        labels: {
+                            font: { size: 20 }
+                        }
                     },
                     title: {
                         display: true,
-                        text: name ? `${symbol} ${name} (日K線)` : `${symbol} (日K線)`,
+                        padding: { bottom: 5 },
+                        text: (name && name.includes(symbol)) ? name : `${symbol} ${name}`,
                         font: { size: 60, weight: 'bold' }
                     },
                     subtitle: {
                         display: true,
-                        text: `最後收盤價: ${last.close} | 筆數: ${render.length}`,
-                        font: { size: 30 }
+                        text: subtitleText,
+                        color: moveColor,
+                        font: { size: 50, weight: 'bold' },
+                        padding: { bottom: 10 }
                     },
                     annotation: { annotations: annotations }
                 },
@@ -662,7 +677,7 @@ class ChartService {
                         position: 'right',
                         display: false,
                         min: 0,
-                        max: maxVolume * 4, // Keeps volume bars in the bottom 25%
+                        max: (Number(maxVolume) || 1) * 3,
                         grid: { display: false }
                     }
                 }
@@ -681,4 +696,4 @@ class ChartService {
     }
 }
 
-module.exports = new ChartService();
+export default new ChartService();

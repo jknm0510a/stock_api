@@ -223,7 +223,7 @@ app.get('/kline/:id', async (c) => {
 
         // DEBUG: return raw payload for inspection
         if (c.req.query('debug') === '1') {
-            return c.json(JSON.parse(chartPayloadStr));
+            return c.text(chartPayloadStr);
         }
 
         // Post to QuickChart
