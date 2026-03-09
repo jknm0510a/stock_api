@@ -212,8 +212,30 @@ app.get('/kline/:id', async (c) => {
         const fromDateStr = fromDate.toISOString().split('T')[0];
 
         // Fetch historical daily candles (explicitly request asc to simplify logic)
-        const candlesRes = await fugleService.getHistoricalCandles(symbol, env.FUGLE_API_KEY, fromDateStr, toDateStr, 'asc');
-        const candles = candlesRes?.data || [];
+        // AND fetch the current quote to patch today's candle if missing
+        const [candlesRes, quoteRes] = await Promise.all([
+            fugleService.getHistoricalCandles(symbol, env.FUGLE_API_KEY, fromDateStr, toDateStr, 'asc'),
+            fugleService.getIntradayQuote(symbol, env.FUGLE_API_KEY).catch(() => null)
+        ]);
+
+        let candles = candlesRes?.data || [];
+
+        // Patch logic: If historical data doesn't have today, add it from quote
+        if (quoteRes && quoteRes.date === toDateStr) {
+            const lastHistoricalDate = candles.length > 0 ? candles[candles.length - 1].date : null;
+            if (lastHistoricalDate !== toDateStr) {
+                // Construct a candle from the quote
+                const todayCandle = {
+                    date: toDateStr,
+                    open: quoteRes.openPrice || quoteRes.previousClose,
+                    high: quoteRes.highPrice || quoteRes.previousClose,
+                    low: quoteRes.lowPrice || quoteRes.previousClose,
+                    close: quoteRes.closePrice || quoteRes.lastPrice || quoteRes.previousClose,
+                    volume: quoteRes.total?.tradeVolume || 0
+                };
+                candles.push(todayCandle);
+            }
+        }
 
         // Build Payload (string, matching intraday chart pattern)
         const chartPayloadStr = chartService.generateKLineChart(candles, symbol, name);
