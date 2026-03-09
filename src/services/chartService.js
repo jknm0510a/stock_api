@@ -240,22 +240,23 @@ class ChartService {
                     borderColor: previousClose
                         ? function (context) {
                             var value = context.dataset.data[context.dataIndex];
-                            return value >= __PREV_CLOSE__ ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
+                            return (value >= __PREV_CLOSE__) ? 'rgb(255, 99, 132)' : 'rgb(75, 192, 192)';
                         }
                         : 'rgb(255, 99, 132)',
-                    fill: false,
+                    fill: 'origin',
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
                     spanGaps: true,
-                    borderWidth: 2,
-                    pointRadius: 1, // Show tiny points to let individual colors render
+                    borderWidth: 6,
+                    pointRadius: 0,
                     segment: {
                         borderColor: previousClose
                             ? function (context) {
-                                if (!context.p0.parsed || !context.p1.parsed) return 'rgb(200, 200, 200)';
+                                if (!context.p0.parsed || !context.p1.parsed) return '#666666';
                                 var p0 = context.p0.parsed.y;
                                 var p1 = context.p1.parsed.y;
-                                if (p0 >= __PREV_CLOSE__ && p1 >= __PREV_CLOSE__) return 'rgb(255, 99, 132)';
+                                if (p0 > __PREV_CLOSE__ && p1 > __PREV_CLOSE__) return 'rgb(255, 99, 132)';
                                 if (p0 < __PREV_CLOSE__ && p1 < __PREV_CLOSE__) return 'rgb(75, 192, 192)';
-                                return 'rgb(200, 200, 200)';
+                                return '#666666';
                             }
                             : undefined
                     },
