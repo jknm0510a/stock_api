@@ -3,7 +3,6 @@
 // but for high-frequency hits like trending charts, a simple Map cache is extremely effective.
 const candlesCache = new Map();
 const tickerCache = new Map();
-const quoteCache = new Map();
 
 /**
  * 取得當前台北時間的交易日 Session ID
@@ -139,19 +138,15 @@ class FugleService {
      * @param {string} apiKey - API 金鑰
      * @returns {Promise<Object>}
      */
+    /**
+     * 取得股票即時報價（包含現價、漲跌、漲跌幅）
+     * @param {string} symbol - 股票代碼
+     * @param {string} apiKey - API 金鑰
+     * @returns {Promise<Object>}
+     */
     async getIntradayQuote(symbol, apiKey) {
         if (!apiKey) {
             throw new Error('API Key missing');
-        }
-
-        const cacheKey = symbol;
-        if (quoteCache.has(cacheKey)) {
-            const cached = quoteCache.get(cacheKey);
-            // 1 minute (60,000 ms) expiration for quotes
-            if (Date.now() - cached.timestamp < 1 * 60 * 1000) {
-                console.log(`[Cache Hit] Quote for ${symbol}`);
-                return cached.data;
-            }
         }
 
         try {
@@ -167,13 +162,6 @@ class FugleService {
             }
 
             const data = await response.json();
-
-            // Save to cache
-            quoteCache.set(cacheKey, {
-                timestamp: Date.now(),
-                data: data
-            });
-
             return data;
         } catch (error) {
             console.error(`Error fetching intraday quote for ${symbol}:`, error.message);
@@ -193,7 +181,9 @@ class FugleService {
 
         const endpoints = [
             { url: `${this.baseUrl}/intraday/tickers?type=EQUITY&exchange=TWSE&market=TSE`, type: 'EQUITY' },
-            { url: `${this.baseUrl}/intraday/tickers?type=INDEX&exchange=TWSE&market=TSE`, type: 'INDEX' }
+            { url: `${this.baseUrl}/intraday/tickers?type=INDEX&exchange=TWSE&market=TSE`, type: 'INDEX' },
+            { url: `${this.baseUrl}/intraday/tickers?type=EQUITY&exchange=TPEx&market=OTC`, type: 'EQUITY' },
+            { url: `${this.baseUrl}/intraday/tickers?type=INDEX&exchange=TPEx&market=OTC`, type: 'INDEX' }
         ];
 
         let allTickers = [];

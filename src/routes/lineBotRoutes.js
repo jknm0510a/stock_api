@@ -212,30 +212,8 @@ app.get('/kline/:id', async (c) => {
         const fromDateStr = fromDate.toISOString().split('T')[0];
 
         // Fetch historical daily candles (explicitly request asc to simplify logic)
-        // AND fetch the current quote to patch today's candle if missing
-        const [candlesRes, quoteRes] = await Promise.all([
-            fugleService.getHistoricalCandles(symbol, env.FUGLE_API_KEY, fromDateStr, toDateStr, 'asc'),
-            fugleService.getIntradayQuote(symbol, env.FUGLE_API_KEY).catch(() => null)
-        ]);
-
-        let candles = candlesRes?.data || [];
-
-        // Patch logic: If historical data doesn't have today, add it from quote
-        if (quoteRes && quoteRes.date === toDateStr) {
-            const lastHistoricalDate = candles.length > 0 ? candles[candles.length - 1].date : null;
-            if (lastHistoricalDate !== toDateStr) {
-                // Construct a candle from the quote
-                const todayCandle = {
-                    date: toDateStr,
-                    open: quoteRes.openPrice || quoteRes.previousClose,
-                    high: quoteRes.highPrice || quoteRes.previousClose,
-                    low: quoteRes.lowPrice || quoteRes.previousClose,
-                    close: quoteRes.closePrice || quoteRes.lastPrice || quoteRes.previousClose,
-                    volume: quoteRes.total?.tradeVolume || 0
-                };
-                candles.push(todayCandle);
-            }
-        }
+        const candlesRes = await fugleService.getHistoricalCandles(symbol, env.FUGLE_API_KEY, fromDateStr, toDateStr, 'asc');
+        const candles = candlesRes?.data || [];
 
         // Build Payload (string, matching intraday chart pattern)
         const chartPayloadStr = chartService.generateKLineChart(candles, symbol, name);
@@ -591,14 +569,31 @@ async function handleEvent(event, c) {
             realSymbol = 'IX0001';
         }
 
-        // Try explicit symbol or EXACT name search first
-        let stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE symbol = ? OR name = ? LIMIT 1');
-        let match = await stmt.bind(queryTerm, queryTerm).first();
+        // Try exact symbol match (case-insensitive)
+        let stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE UPPER(symbol) = ? LIMIT 1');
+        let match = await stmt.bind(queryTerm.toUpperCase()).first();
 
-        // Fallback to fuzzy name search if no exact match is found
+        // If not found, try exact name match
         if (!match) {
-            stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE name LIKE ? LIMIT 1');
-            match = await stmt.bind(`%${queryTerm}%`).first();
+            stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE name = ? LIMIT 1');
+            match = await stmt.bind(queryTerm).first();
+        }
+
+        // If still not found, handle "Symbol Name" pattern or partial name match
+        if (!match) {
+            // If there's a space, try the first part as a symbol
+            if (queryTerm.includes(' ')) {
+                const parts = queryTerm.split(' ');
+                const potentialSymbol = parts[0].toUpperCase();
+                stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE UPPER(symbol) = ? LIMIT 1');
+                match = await stmt.bind(potentialSymbol).first();
+            }
+
+            // If still no match, try fuzzy name search
+            if (!match) {
+                stmt = extDB.prepare('SELECT symbol, name FROM tickers WHERE name LIKE ? LIMIT 1');
+                match = await stmt.bind(`%${queryTerm}%`).first();
+            }
         }
 
         if (match) {
