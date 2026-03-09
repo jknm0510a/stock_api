@@ -208,7 +208,7 @@ app.get('/kline/:id', async (c) => {
         // Taiwan is UTC+8, doing basic string formatting
         const toDateStr = today.toISOString().split('T')[0];
         const fromDate = new Date();
-        fromDate.setDate(today.getDate() - 60); // 顯示最近 60 天
+        fromDate.setDate(today.getDate() - 250); // 抓 250 天，保證一整年內的交易日夠算 60MA
         const fromDateStr = fromDate.toISOString().split('T')[0];
 
         // Fetch historical daily candles (explicitly request asc to simplify logic)

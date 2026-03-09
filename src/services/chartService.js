@@ -422,8 +422,8 @@ class ChartService {
         const ma20Full = calculateMA(sorted, 20);
         const ma60Full = calculateMA(sorted, 60);
 
-        // 3. Take last 60 for rendering
-        const startIndex = Math.max(0, sorted.length - 60);
+        // 3. Take last 30 for rendering
+        const startIndex = Math.max(0, sorted.length - 30);
         const render = sorted.slice(startIndex);
 
         // 4. Prepare Labels, Data, and Annotations
