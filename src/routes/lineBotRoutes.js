@@ -692,24 +692,87 @@ async function handleEvent(event, c) {
 
         // -- REGULAR INTRADAY SEARCH --
         // 2. Fetch data from Fugle (timeframe=1 as requested by user)
-        const [candlesRes, tickerRes] = await Promise.all([
+        const [candlesRes, tickerRes, quoteRes] = await Promise.all([
             fugleService.getIntradayCandles(realSymbol, env.FUGLE_API_KEY, 1),
-            fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null) // Fallback if ticker fails
+            fugleService.getIntradayTicker(realSymbol, env.FUGLE_API_KEY).catch(() => null),
+            fugleService.getIntradayQuote(realSymbol, env.FUGLE_API_KEY).catch(() => null)
         ]);
 
         // Log chart search action
-        logSystemAction(c, userId, 'SEARCH', realSymbol, realName, 'getIntradayCandles/Ticker');
+        logSystemAction(c, userId, 'SEARCH', realSymbol, realName, 'getIntradayCandles/Ticker/Quote');
 
         const candles = candlesRes?.data || [];
         const previousClose = tickerRes?.previousClose;
 
         // 3. Construct proxy URL ensuring it's HTTPS and native .png
-        // The image GET handler will do ALL the heavy lifting dynamically! 
         const urlObj = new URL(reqUrl);
         const ts = Date.now();
         const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}&t=${ts}`;
 
-        // 5. Send Image via Reply Message (Avoid Push Quota issues)
+        // Construct 5-level Bid/Ask rows
+        const bids = quoteRes?.bids || [];
+        const asks = quoteRes?.asks || []; // Both are sorted by Fugle: bids (high to low), asks (low to high)
+
+        const bidColor = '#ff6384'; // Trend chart Red
+        const askColor = '#4bc0c0'; // Trend chart Green
+
+        const bidAskRows = [];
+        for (let i = 0; i < 5; i++) {
+            const bid = bids[i];
+            const ask = asks[i];
+
+            bidAskRows.push({
+                type: 'box',
+                layout: 'horizontal',
+                contents: [
+                    // Bid Side
+                    {
+                        type: 'text',
+                        text: bid ? bid.size.toString() : '-',
+                        size: 'xs',
+                        color: '#888888',
+                        flex: 1,
+                        align: 'start'
+                    },
+                    {
+                        type: 'text',
+                        text: bid ? bid.price.toString() : '-',
+                        size: 'xs',
+                        weight: 'bold',
+                        color: bidColor,
+                        flex: 1,
+                        align: 'end'
+                    },
+                    // Gap
+                    {
+                        type: 'separator',
+                        margin: 'md'
+                    },
+                    // Ask Side
+                    {
+                        type: 'text',
+                        text: ask ? ask.price.toString() : '-',
+                        size: 'xs',
+                        weight: 'bold',
+                        color: askColor,
+                        flex: 1,
+                        align: 'start',
+                        margin: 'md'
+                    },
+                    {
+                        type: 'text',
+                        text: ask ? ask.size.toString() : '-',
+                        size: 'xs',
+                        color: '#888888',
+                        flex: 1,
+                        align: 'end'
+                    }
+                ],
+                margin: 'sm'
+            });
+        }
+
+        // 5. Send Image via Reply Message
         return await replyMessage(event.replyToken, [{
             type: 'flex',
             altText: `查閱 ${displayName} 最新走勢圖`,
@@ -720,18 +783,54 @@ async function handleEvent(event, c) {
                     type: 'box',
                     layout: 'vertical',
                     paddingAll: '0px',
-                    action: {
-                        type: 'uri',
-                        label: '查看走勢圖',
-                        uri: imageUrl
-                    },
                     contents: [
                         {
                             type: 'image',
                             url: imageUrl,
                             size: 'full',
                             aspectRatio: '1.4:1',
-                            aspectMode: 'cover'
+                            aspectMode: 'cover',
+                            action: {
+                                type: 'uri',
+                                label: '查看走勢圖',
+                                uri: imageUrl
+                            }
+                        },
+                        // Bid/Ask Table
+                        {
+                            type: 'box',
+                            layout: 'vertical',
+                            paddingAll: '15px',
+                            backgroundColor: '#fafafa',
+                            contents: [
+                                {
+                                    type: 'box',
+                                    layout: 'horizontal',
+                                    contents: [
+                                        {
+                                            type: 'text',
+                                            text: '委買 (張/價)',
+                                            size: 'xxs',
+                                            color: '#aaaaaa',
+                                            flex: 1,
+                                            align: 'start'
+                                        },
+                                        {
+                                            type: 'text',
+                                            text: '委賣 (價/張)',
+                                            size: 'xxs',
+                                            color: '#aaaaaa',
+                                            flex: 1,
+                                            align: 'end'
+                                        }
+                                    ]
+                                },
+                                {
+                                    type: 'separator',
+                                    margin: 'xs'
+                                },
+                                ...bidAskRows
+                            ]
                         }
                     ]
                 },

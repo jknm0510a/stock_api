@@ -3,6 +3,7 @@
 // but for high-frequency hits like trending charts, a simple Map cache is extremely effective.
 const candlesCache = new Map();
 const tickerCache = new Map();
+const quoteCache = new Map();
 
 /**
  * 取得當前台北時間的交易日 Session ID
@@ -149,6 +150,16 @@ class FugleService {
             throw new Error('API Key missing');
         }
 
+        const cacheKey = symbol;
+        if (quoteCache.has(cacheKey)) {
+            const cached = quoteCache.get(cacheKey);
+            // 1 minute (60,000 ms) expiration for quotes
+            if (Date.now() - cached.timestamp < 1 * 60 * 1000) {
+                console.log(`[Cache Hit] Quote for ${symbol}`);
+                return cached.data;
+            }
+        }
+
         try {
             const url = `${this.baseUrl}/intraday/quote/${symbol}`;
             const response = await fetch(url, {
@@ -162,6 +173,13 @@ class FugleService {
             }
 
             const data = await response.json();
+
+            // Save to cache
+            quoteCache.set(cacheKey, {
+                timestamp: Date.now(),
+                data: data
+            });
+
             return data;
         } catch (error) {
             console.error(`Error fetching intraday quote for ${symbol}:`, error.message);
