@@ -625,7 +625,6 @@ async function handleEvent(event, c) {
             const urlObj = new URL(reqUrl);
             const ts = Date.now();
             const imageUrl = `${urlObj.origin}/webhook/kline/${realSymbol}.png?name=${encodeURIComponent(realName)}&t=${ts}`;
-            const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}/technical-analysis`;
 
             return await replyMessage(event.replyToken, [{
                 type: 'flex',
@@ -639,8 +638,8 @@ async function handleEvent(event, c) {
                         paddingAll: '0px',
                         action: {
                             type: 'uri',
-                            label: '開啟 Yahoo 股市',
-                            uri: yahooFinanceUrl
+                            label: '查看K線圖',
+                            uri: imageUrl
                         },
                         contents: [
                             {
@@ -694,7 +693,6 @@ async function handleEvent(event, c) {
         const imageUrl = `${urlObj.origin}/webhook/image/${realSymbol}.png?prev=${previousClose || ''}&name=${encodeURIComponent(realName)}&t=${ts}`;
 
         // 5. Send Image via Reply Message (Avoid Push Quota issues)
-        const yahooFinanceUrl = `https://tw.stock.yahoo.com/quote/${realSymbol}`;
         return await replyMessage(event.replyToken, [{
             type: 'flex',
             altText: `查閱 ${displayName} 最新走勢圖`,
@@ -707,8 +705,8 @@ async function handleEvent(event, c) {
                     paddingAll: '0px',
                     action: {
                         type: 'uri',
-                        label: '開啟 Yahoo 股市',
-                        uri: yahooFinanceUrl
+                        label: '查看走勢圖',
+                        uri: imageUrl
                     },
                     contents: [
                         {
